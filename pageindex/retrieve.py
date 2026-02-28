@@ -63,7 +63,7 @@ def retrieve(query, tree, pdf_path=None, model=None, top_k=5):
 Each section has a node_id, title, and summary.
 Classify each section as:
 - "relevant": this section directly contains the answer to the question
-- "go_deeper": the answer is likely in one of this section's sub-sections
+- "explore": the answer is likely in one of this section's sub-sections
 Omit sections that are clearly unrelated to the question.
 
 Question: {query}
@@ -75,7 +75,7 @@ Reply in the following JSON format:
 {{
     "thinking": "<your reasoning>",
     "relevant": ["node_id_1", ...],
-    "go_deeper": ["node_id_2", ...]
+    "explore": ["node_id_2", ...]
 }}
 Directly return the final JSON structure. Do not output anything else."""
 
@@ -110,7 +110,7 @@ Directly return the final JSON structure. Do not output anything else."""
             results.append(_make_result(node_map[node_id]))
 
         deeper = []
-        for node_id in result_json.get('go_deeper', []):
+        for node_id in result_json.get('explore', []):
             if node_id in seen_ids or node_id not in node_map:
                 continue
             seen_ids.add(node_id)

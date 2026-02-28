@@ -2,6 +2,7 @@ import tiktoken
 import openai
 import logging
 import os
+import textwrap
 from datetime import datetime
 import time
 import json
@@ -85,6 +86,21 @@ def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
                 logging.error('Max retries reached for prompt: ' + prompt)
                 return "Error"
             
+
+def ChatGPT_API_stream(model, prompt, api_key=CHATGPT_API_KEY):
+    """Return a generator that yields token chunks (str) one at a time."""
+    client = openai.OpenAI(api_key=api_key)
+    with client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        stream=True,
+    ) as stream:
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
 
 async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY):
     max_retries = 10
@@ -710,3 +726,28 @@ class ConfigLoader:
         self._validate_keys(user_dict)
         merged = {**self._default_dict, **user_dict}
         return config(**merged)
+
+def create_node_mapping(tree):
+    """Create a flat dict mapping node_id to node for quick lookup."""
+    mapping = {}
+    def _traverse(nodes):
+        for node in nodes:
+            if node.get('node_id'):
+                mapping[node['node_id']] = node
+            if node.get('nodes'):
+                _traverse(node['nodes'])
+    _traverse(tree)
+    return mapping
+
+def print_tree(tree, indent=0):
+    for node in tree:
+        summary = node.get('summary') or node.get('prefix_summary', '')
+        summary_str = f"  —  {summary[:60]}..." if summary else ""
+        print('  ' * indent + f"[{node.get('node_id', '?')}] {node.get('title', '')}{summary_str}")
+        if node.get('nodes'):
+            print_tree(node['nodes'], indent + 1)
+
+def print_wrapped(text, width=100):
+    for line in text.splitlines():
+        print(textwrap.fill(line, width=width))
+

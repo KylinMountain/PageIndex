@@ -1,10 +1,13 @@
 """
-PageIndex Local SDK Demo
-Mirrors the notebook demo flow:
-  Step 1 — Index PDF and inspect tree structure
-  Step 2 — Reasoning-based retrieval
-  Step 3 — Answer generation (streaming)
+PageIndex Agent SDK Demo
+4-step demo using the 3-tool agent:
+  Step 1 — Download, index PDF, and inspect tree structure
+  Step 2 — Inspect document metadata via get_document()
+  Step 3 — Ask a question (agent auto-calls tools)
+  Step 4 — Reload from workspace and verify persistence
 """
+import os
+import requests
 from pageindex import PageIndexClient
 import pageindex.utils as utils
 
@@ -13,7 +16,6 @@ PDF_PATH = "tests/pdfs/deepseek-r1.pdf"
 WORKSPACE = "~/.pageindex"
 
 # ── Download PDF if needed ────────────────────────────────────────────────────
-import os, requests
 if not os.path.exists(PDF_PATH):
     print(f"Downloading {PDF_URL} ...")
     os.makedirs(os.path.dirname(PDF_PATH), exist_ok=True)
@@ -22,52 +24,41 @@ if not os.path.exists(PDF_PATH):
         f.write(r.content)
     print("Download complete.\n")
 
-# ── Setup ────────────────────────────────────────────────────────────────────
+# ── Setup ─────────────────────────────────────────────────────────────────────
 client = PageIndexClient(workspace=WORKSPACE)
 
-# ── Step 1: Index ────────────────────────────────────────────────────────────
+# ── Step 1: Index + Tree ──────────────────────────────────────────────────────
 print("=" * 60)
-print("Step 1: Indexing PDF")
+print("Step 1: Indexing PDF and inspecting tree structure")
 print("=" * 60)
 doc_id = client.index(PDF_PATH)
 print(f"\nDocument ID: {doc_id}")
-
-doc = client.documents[doc_id]
-print(f"Document name: {doc.get('doc_name', 'N/A')}")
-print(f"Description:   {doc.get('doc_description', 'N/A')}")
-
 print("\nTree Structure:")
-utils.print_tree(doc["structure"])
+utils.print_tree(client.documents[doc_id]["structure"])
 
-# ── Step 2: Retrieval ─────────────────────────────────────────────────────────
+# ── Step 2: Document Metadata ─────────────────────────────────────────────────
 print("\n" + "=" * 60)
-print("Step 2: Reasoning-Based Retrieval")
+print("Step 2: Document Metadata (get_document)")
 print("=" * 60)
+metadata = client.get_document(doc_id)
+print(metadata)
 
-query = "What are the conclusions in this document?"
-print(f"\nQuery: '{query}'")
-
-nodes = client.retrieve(doc_id, query)
-print(f"\nRetrieved {len(nodes)} node(s):")
-for n in nodes:
-    page_info = f"  pages {n.get('start_index')}–{n.get('end_index')}" if n.get('start_index') else ""
-    print(f"  [{n['node_id']}] {n['title']}{page_info}")
-
-# ── Step 3: Streaming Answer ──────────────────────────────────────────────────
+# ── Step 3: Agent Query ───────────────────────────────────────────────────────
 print("\n" + "=" * 60)
-print("Step 3: Answer Generation (streaming)")
+print("Step 3: Agent Query (auto tool-use)")
 print("=" * 60)
+question = "What are the main conclusions of this paper?"
+print(f"\nQuestion: '{question}'\n")
+answer = client.query_agent(doc_id, question)
+print("Answer:")
+print(answer)
 
-query2 = "What are the conclusions in this document?"
-print(f"\nQuery: '{query2}'\n")
-for chunk in client.query_stream(doc_id, query2):
-    print(chunk, end="", flush=True)
-print("\n")
-
-# ── Persistence Demo ──────────────────────────────────────────────────────────
-print("=" * 60)
-print("Bonus: Persistence — reload without re-indexing")
+# ── Step 4: Persistence Verification ─────────────────────────────────────────
+print("\n" + "=" * 60)
+print("Step 4: Persistence — reload without re-indexing")
 print("=" * 60)
 client2 = PageIndexClient(workspace=WORKSPACE)
-nodes2 = client2.retrieve(doc_id, "What are the conclusions in this document?")
-print(f"Retrieved {len(nodes2)} node(s) without re-indexing. ✓")
+answer2 = client2.query_agent(doc_id, "What are the main conclusions of this paper?")
+print("Answer from reloaded client:")
+print(answer2)
+print("\nPersistence verified. ✓")

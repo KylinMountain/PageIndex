@@ -1,146 +1,127 @@
-import os
 import json
-import asyncio
-import logging
 
 try:
-    from .utils import (
-        ChatGPT_API_async, extract_json,
-        get_page_tokens, get_text_of_pdf_pages,
-    )
+    from .utils import get_page_tokens, get_text_of_pdf_pages, get_number_of_pages, remove_fields, structure_to_list
 except ImportError:
-    from utils import (
-        ChatGPT_API_async, extract_json,
-        get_page_tokens, get_text_of_pdf_pages,
-    )
+    from utils import get_page_tokens, get_text_of_pdf_pages, get_number_of_pages, remove_fields, structure_to_list
 
 
-def retrieve(query, tree, pdf_path=None, model=None, top_k=5):
-    """Retrieve relevant document sections for a query using LLM-based tree search.
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-    Navigates the PageIndex tree level by level: at each level an LLM decides
-    which nodes directly answer the query and which need deeper exploration.
-    Sibling branches are explored in parallel.
+def _parse_pages(pages: str) -> list[int]:
+    """Parse a pages string like '5-7', '3,8', or '12' into a sorted list of ints."""
+    result = []
+    for part in pages.split(','):
+        part = part.strip()
+        if '-' in part:
+            start, end = part.split('-', 1)
+            result.extend(range(int(start.strip()), int(end.strip()) + 1))
+        else:
+            result.append(int(part))
+    return sorted(set(result))
 
-    Args:
-        query (str): The question or search query.
-        tree (list): PageIndex tree structure (output of page_index or md_to_tree).
-        pdf_path (str, optional): Path to the source PDF. If provided, extracts text.
-        model (str, optional): LLM model name. Defaults to "gpt-4o-2024-11-20".
-        top_k (int, optional): Maximum number of nodes to return.
 
-    Returns:
-        list[dict]: Matched nodes, each with keys:
-            - node_id (str)
-            - title (str)
-            - start_index (int)
-            - end_index (int)
-            - text (str)
-    """
-    if model is None:
-        model = "gpt-4o-2024-11-20"
+def _count_pages(doc_info: dict) -> int:
+    """Return total page count for a document."""
+    if doc_info.get('type') == 'pdf':
+        return get_number_of_pages(doc_info['path'])
+    # For MD, find max line_num across all nodes
+    max_line = 0
+    def _traverse(nodes):
+        nonlocal max_line
+        for node in nodes:
+            ln = node.get('line_num', 0)
+            if ln and ln > max_line:
+                max_line = ln
+            if node.get('nodes'):
+                _traverse(node['nodes'])
+    _traverse(doc_info.get('structure', []))
+    return max_line
 
-    pdf_pages = None
-    if pdf_path and os.path.exists(pdf_path) and pdf_path.lower().endswith('.pdf'):
-        pdf_pages = get_page_tokens(pdf_path)
 
-    seen_ids = set()
+def _get_pdf_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
+    """Extract text for specific PDF pages (1-indexed)."""
+    pdf_pages = get_page_tokens(doc_info['path'])
+    total = len(pdf_pages)
     results = []
+    for p in page_nums:
+        if 1 <= p <= total:
+            results.append({'page': p, 'content': pdf_pages[p - 1][0]})
+    return results
 
-    async def search_level(nodes):
-        level_view = [
-            {
-                'node_id': n['node_id'],
-                'title': n.get('title', ''),
-                'summary': n.get('summary') or n.get('prefix_summary', ''),
-            }
-            for n in nodes if n.get('node_id')
-        ]
-        if not level_view:
-            return
 
-        prompt = f"""You are given a question and a list of document sections at the same level of a table of contents.
-Each section has a node_id, title, and summary.
-Classify each section as:
-- "relevant": this section directly contains the answer to the question
-- "explore": the answer is likely in one of this section's sub-sections
-Omit sections that are clearly unrelated to the question.
+def _get_md_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
+    """
+    For Markdown documents, 'pages' are line numbers.
+    Find nodes whose line_num falls within the requested set and return their text.
+    """
+    page_set = set(page_nums)
+    results = []
+    seen = set()
 
-Question: {query}
+    def _traverse(nodes):
+        for node in nodes:
+            ln = node.get('line_num')
+            if ln and ln in page_set and ln not in seen:
+                seen.add(ln)
+                results.append({'page': ln, 'content': node.get('text', '')})
+            if node.get('nodes'):
+                _traverse(node['nodes'])
 
-Sections:
-{json.dumps(level_view, indent=2)}
+    _traverse(doc_info.get('structure', []))
+    results.sort(key=lambda x: x['page'])
+    return results
 
-Reply in the following JSON format:
-{{
-    "thinking": "<your reasoning>",
-    "relevant": ["node_id_1", ...],
-    "explore": ["node_id_2", ...]
-}}
-Directly return the final JSON structure. Do not output anything else."""
 
-        response = await ChatGPT_API_async(model=model, prompt=prompt)
-        result_json = extract_json(response)
-        if not result_json:
-            logging.warning('retrieve: failed to parse LLM response at this level, skipping')
-            return
+# ── Tool functions ────────────────────────────────────────────────────────────
 
-        node_map = {n['node_id']: n for n in nodes if n.get('node_id')}
+def tool_get_document(documents: dict, doc_id: str) -> str:
+    """Return JSON with document metadata: doc_id, doc_name, doc_description, type, status, page_count."""
+    doc_info = documents.get(doc_id)
+    if not doc_info:
+        return json.dumps({'error': f'Document {doc_id} not found'})
+    return json.dumps({
+        'doc_id': doc_id,
+        'doc_name': doc_info.get('doc_name', ''),
+        'doc_description': doc_info.get('doc_description', ''),
+        'type': doc_info.get('type', ''),
+        'status': 'completed',
+        'page_count': _count_pages(doc_info),
+    })
 
-        def _get_text(node):
-            text = node.get('text', '')
-            if not text and pdf_pages and node.get('start_index') is not None and node.get('end_index') is not None:
-                text = get_text_of_pdf_pages(pdf_pages, node['start_index'], node['end_index'])
-            return text
 
-        def _make_result(node):
-            return {
-                'node_id': node['node_id'],
-                'title': node.get('title', ''),
-                'start_index': node.get('start_index'),
-                'end_index': node.get('end_index'),
-                'line_num': node.get('line_num'),
-                'text': _get_text(node),
-            }
+def tool_get_document_structure(documents: dict, doc_id: str) -> str:
+    """Return tree structure JSON with text fields removed (saves tokens)."""
+    doc_info = documents.get(doc_id)
+    if not doc_info:
+        return json.dumps({'error': f'Document {doc_id} not found'})
+    structure = doc_info.get('structure', [])
+    structure_no_text = remove_fields(structure, fields=['text'])
+    return json.dumps(structure_no_text, ensure_ascii=False)
 
-        for node_id in result_json.get('relevant', []):
-            if node_id in seen_ids or node_id not in node_map:
-                continue
-            seen_ids.add(node_id)
-            results.append(_make_result(node_map[node_id]))
 
-        deeper = []
-        for node_id in result_json.get('explore', []):
-            if node_id in seen_ids or node_id not in node_map:
-                continue
-            seen_ids.add(node_id)
-            node = node_map[node_id]
-            children = node.get('nodes', [])
-            if children:
-                deeper.append(search_level(children))
-            else:
-                results.append(_make_result(node))
+def tool_get_page_content(documents: dict, doc_id: str, pages: str) -> str:
+    """
+    Retrieve page content for a document.
 
-        if deeper:
-            await asyncio.gather(*deeper)
+    pages format: '5-7', '3,8', or '12'
+    For PDF: pages are physical page numbers (1-indexed).
+    For Markdown: pages are line numbers corresponding to node headers.
 
-    # Handle running inside an existing event loop (e.g. Jupyter)
+    Returns JSON list of {'page': int, 'content': str}.
+    """
+    doc_info = documents.get(doc_id)
+    if not doc_info:
+        return json.dumps({'error': f'Document {doc_id} not found'})
+
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
+        page_nums = _parse_pages(pages)
+    except (ValueError, AttributeError) as e:
+        return json.dumps({'error': f'Invalid pages format: {pages!r}. Use "5-7", "3,8", or "12". Error: {e}'})
 
-    if loop and loop.is_running():
-        import threading
-        def run_in_thread():
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            new_loop.run_until_complete(search_level(tree))
-            new_loop.close()
-        thread = threading.Thread(target=run_in_thread)
-        thread.start()
-        thread.join()
+    if doc_info.get('type') == 'pdf':
+        content = _get_pdf_page_content(doc_info, page_nums)
     else:
-        asyncio.run(search_level(tree))
+        content = _get_md_page_content(doc_info, page_nums)
 
-    return results[:top_k]
+    return json.dumps(content, ensure_ascii=False)

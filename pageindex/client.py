@@ -2,24 +2,38 @@ import os
 import uuid
 import json
 import asyncio
-import copy
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+from agents import Agent, Runner, function_tool
+
 from .page_index import page_index
 from .page_index_md import md_to_tree
-from .retrieve import retrieve as tree_retrieve
-from .utils import ChatGPT_API, ChatGPT_API_stream, extract_json, remove_fields, create_node_mapping
+from .retrieve import tool_get_document, tool_get_document_structure, tool_get_page_content
+from .utils import remove_fields, create_node_mapping
+
+AGENT_SYSTEM_PROMPT = """
+You are PageIndex, a document QA assistant.
+TOOL USE:
+- Call get_document() first to confirm status and page count.
+- Call get_document_structure() to find relevant page ranges (use node summaries and start_index/end_index).
+- Call get_page_content(pages="5-7") with tight ranges. Never fetch the whole doc.
+- For Markdown, pages = line numbers from the structure (the line_num field).
+ANSWERING: Answer based only on tool output. Be concise.
+"""
+
 
 class PageIndexClient:
     """
-    A client for the PageIndex API, designed to mimic how humans read and understand documents.
-    Flow: Index -> Retrieve -> Query
+    A client for the PageIndex API.
+    Uses an OpenAI Agents SDK agent with 3 tools to answer document questions.
+    Flow: Index -> query_agent (tool-use loop) -> Answer
     """
     def __init__(self, api_key: str = None, model: str = "gpt-4o-2024-11-20", workspace: str = None):
         self.api_key = api_key or os.getenv("CHATGPT_API_KEY")
         if self.api_key:
             os.environ["CHATGPT_API_KEY"] = self.api_key
+            os.environ["OPENAI_API_KEY"] = self.api_key
         self.model = model
         self.workspace = Path(workspace).expanduser() if workspace else None
         if self.workspace:
@@ -29,10 +43,7 @@ class PageIndexClient:
             self._load_workspace()
 
     def index(self, file_path: str, mode: str = "auto") -> str:
-        """
-        Upload and index a document.
-        Returns a document_id.
-        """
+        """Upload and index a document. Returns a document_id."""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
@@ -48,7 +59,7 @@ class PageIndexClient:
                 doc=file_path,
                 model=self.model,
                 if_add_node_summary='yes',
-                if_add_node_text='yes',  # Keep text for easier retrieval
+                if_add_node_text='yes',
                 if_add_node_id='yes',
                 if_add_doc_description='yes'
             )
@@ -60,7 +71,7 @@ class PageIndexClient:
                 'doc_name': result.get('doc_name', ''),
                 'doc_description': result.get('doc_description', '')
             }
-            
+
         elif mode == "md" or (mode == "auto" and is_md):
             print(f"Indexing Markdown: {file_path}")
             result = asyncio.run(md_to_tree(
@@ -70,7 +81,7 @@ class PageIndexClient:
                 summary_token_threshold=200,
                 model=self.model,
                 if_add_doc_description='yes',
-                if_add_node_text='yes',  # Keep text for easier retrieval
+                if_add_node_text='yes',
                 if_add_node_id='yes'
             ))
             self.documents[doc_id] = {
@@ -103,85 +114,67 @@ class PageIndexClient:
         if self.documents:
             print(f"Loaded {len(self.documents)} document(s) from workspace.")
 
-    def retrieve(self, doc_id: str, prompt: str, top_k: int = 5) -> List[Dict]:
-        """
-        Find relevant sections within a specific document using tree search reasoning.
-        This simulates a human traversing the document's table of contents level-by-level.
-        """
-        doc_info = self.documents.get(doc_id)
-        if not doc_info:
-            raise ValueError(f"Document {doc_id} not found. Please index it first.")
-        
-        pdf_path = doc_info['path'] if doc_info.get('type') == 'pdf' else None
+    # ── Public tool methods (thin wrappers) ───────────────────────────────────
 
-        retrieved_nodes = tree_retrieve(
-            query=prompt,
-            tree=doc_info['structure'],
-            pdf_path=pdf_path,
+    def get_document(self, doc_id: str) -> str:
+        """Return document metadata JSON."""
+        return tool_get_document(self.documents, doc_id)
+
+    def get_document_structure(self, doc_id: str) -> str:
+        """Return document tree structure JSON (without text fields)."""
+        return tool_get_document_structure(self.documents, doc_id)
+
+    def get_page_content(self, doc_id: str, pages: str) -> str:
+        """Return page content JSON for the given pages string (e.g. '5-7', '3,8', '12')."""
+        return tool_get_page_content(self.documents, doc_id, pages)
+
+    # ── Agent core ────────────────────────────────────────────────────────────
+
+    def query_agent(self, doc_id: str, prompt: str) -> str:
+        """
+        Run the PageIndex agent for a document query.
+        The agent automatically calls get_document, get_document_structure,
+        and get_page_content tools as needed to answer the question.
+        """
+        client_self = self
+
+        @function_tool
+        def get_document() -> str:
+            """Get document metadata: status, page count, name, and description."""
+            return client_self.get_document(doc_id)
+
+        @function_tool
+        def get_document_structure() -> str:
+            """Get the document's full tree structure (without text) to find relevant sections."""
+            return client_self.get_document_structure(doc_id)
+
+        @function_tool
+        def get_page_content(pages: str) -> str:
+            """
+            Get the text content of specific pages or line numbers.
+            Use tight ranges: e.g. '5-7' for pages 5 to 7, '3,8' for pages 3 and 8, '12' for page 12.
+            For Markdown documents, use line numbers from the structure's line_num field.
+            """
+            return client_self.get_page_content(doc_id, pages)
+
+        agent = Agent(
+            name="PageIndex",
+            instructions=AGENT_SYSTEM_PROMPT,
+            tools=[get_document, get_document_structure, get_page_content],
             model=self.model,
-            top_k=top_k
         )
-                
-        return retrieved_nodes
+        result = Runner.run_sync(agent, prompt)
+        return result.final_output
+
+    # ── Public query API ──────────────────────────────────────────────────────
 
     def query(self, doc_id: str, prompt: str) -> str:
-        """
-        Ask a question about an indexed document, fetching context automatically.
-        """
-        print(f"Retrieving context for query: '{prompt}'...")
-        retrieved_context = self.retrieve(doc_id, prompt)
-        
-        if not retrieved_context:
-            return "I couldn't find relevant information in the document to answer your question."
-            
-        # Synthesize answer
-        context_text = "\n\n---\n\n".join(
-            [f"Section: {n['title']}\nContent: {n['text']}" for n in retrieved_context]
-        )
-        
-        query_prompt = f"""
-You are an expert document analysis assistant.
-Answer the question based ONLY on the provided context retrieved from the document.
-If the context does not contain the answer, say "I don't have enough information to answer that."
-
-Question: {prompt}
-
-Retrieved Context:
-{context_text}
-
-Provide a clear, concise, and accurate answer based on the context above.
-"""
-        print("Generating answer...")
-        answer = ChatGPT_API(self.model, query_prompt)
-        return answer
+        """Ask a question about an indexed document. Returns the agent's answer."""
+        return self.query_agent(doc_id, prompt)
 
     def query_stream(self, doc_id: str, prompt: str):
         """
         Ask a question about an indexed document with streaming output.
-        Returns a generator that yields answer tokens one at a time.
+        MVP: yields the full answer as a single chunk.
         """
-        print(f"Retrieving context for query: '{prompt}'...")
-        retrieved_context = self.retrieve(doc_id, prompt)
-
-        if not retrieved_context:
-            yield "I couldn't find relevant information in the document to answer your question."
-            return
-
-        context_text = "\n\n---\n\n".join(
-            [f"Section: {n['title']}\nContent: {n['text']}" for n in retrieved_context]
-        )
-
-        query_prompt = f"""
-You are an expert document analysis assistant.
-Answer the question based ONLY on the provided context retrieved from the document.
-If the context does not contain the answer, say "I don't have enough information to answer that."
-
-Question: {prompt}
-
-Retrieved Context:
-{context_text}
-
-Provide a clear, concise, and accurate answer based on the context above.
-"""
-        print("Generating answer...")
-        yield from ChatGPT_API_stream(self.model, query_prompt)
+        yield self.query_agent(doc_id, prompt)

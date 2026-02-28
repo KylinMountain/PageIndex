@@ -13,4 +13,3 @@ log/*
 logs/
 parts/*
 json_results/*
-tests/pdfs/*.pdf

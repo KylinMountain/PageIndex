@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from agents import Agent, Runner, function_tool
+from agents.stream_events import RunItemStreamEvent
 
 from .page_index import page_index
 from .page_index_md import md_to_tree
@@ -130,11 +131,14 @@ class PageIndexClient:
 
     # ── Agent core ────────────────────────────────────────────────────────────
 
-    def query_agent(self, doc_id: str, prompt: str) -> str:
+    def query_agent(self, doc_id: str, prompt: str, verbose: bool = False) -> str:
         """
         Run the PageIndex agent for a document query.
         The agent automatically calls get_document, get_document_structure,
         and get_page_content tools as needed to answer the question.
+
+        Args:
+            verbose: If True, print each tool call and result as they happen.
         """
         client_self = self
 
@@ -163,8 +167,30 @@ class PageIndexClient:
             tools=[get_document, get_document_structure, get_page_content],
             model=self.model,
         )
-        result = Runner.run_sync(agent, prompt)
-        return result.final_output
+
+        if not verbose:
+            result = Runner.run_sync(agent, prompt)
+            return result.final_output
+
+        # verbose mode: stream events and print tool calls
+        async def _run_verbose():
+            turn = 0
+            stream = Runner.run_streamed(agent, prompt)
+            async for event in stream.stream_events():
+                if not isinstance(event, RunItemStreamEvent):
+                    continue
+                if event.name == "tool_called":
+                    turn += 1
+                    raw = event.item.raw_item
+                    args = getattr(raw, "arguments", "{}")
+                    print(f"\n[Turn {turn}] → {raw.name}({args})")
+                elif event.name == "tool_output":
+                    output = str(event.item.output)
+                    preview = output[:200] + "..." if len(output) > 200 else output
+                    print(f"         ← {preview}")
+            return stream.final_output
+
+        return asyncio.run(_run_verbose())
 
     # ── Public query API ──────────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@ import os
 import uuid
 import json
 import asyncio
+import concurrent.futures
 from pathlib import Path
 from agents import Agent, Runner, function_tool
 from agents.stream_events import RunItemStreamEvent
@@ -13,10 +14,10 @@ from .retrieve import tool_get_document, tool_get_document_structure, tool_get_p
 AGENT_SYSTEM_PROMPT = """
 You are PageIndex, a document QA assistant.
 TOOL USE:
-- Call get_document() first to confirm status and page count.
+- Call get_document() first to confirm status and page/line count.
 - Call get_document_structure() to find relevant page ranges (use node summaries and start_index/end_index).
 - Call get_page_content(pages="5-7") with tight ranges. Never fetch the whole doc.
-- For Markdown, pages = line numbers from the structure (the line_num field).
+- For Markdown, pages = line numbers from the structure (the line_num field). Use line_count from get_document() as the upper bound.
 ANSWERING: Answer based only on tool output. Be concise.
 """
 
@@ -104,13 +105,17 @@ class PageIndexClient:
             json.dump(self.documents[doc_id], f, ensure_ascii=False, indent=2)
 
     def _load_workspace(self):
+        loaded = 0
         for path in self.workspace.glob("*.json"):
-            with open(path, "r", encoding="utf-8") as f:
-                doc = json.load(f)
-            doc_id = path.stem
-            self.documents[doc_id] = doc
-        if self.documents:
-            print(f"Loaded {len(self.documents)} document(s) from workspace.")
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    doc = json.load(f)
+                self.documents[path.stem] = doc
+                loaded += 1
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"Warning: skipping corrupt workspace file {path.name}: {e}")
+        if loaded:
+            print(f"Loaded {loaded} document(s) from workspace.")
 
     # ── Public tool methods (thin wrappers) ───────────────────────────────────
 
@@ -187,7 +192,13 @@ class PageIndexClient:
                     print(f"         ← {preview}")
             return stream.final_output
 
-        return asyncio.run(_run_verbose())
+        try:
+            asyncio.get_running_loop()
+            # Inside a running event loop (e.g. Jupyter) — run in a thread
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, _run_verbose()).result()
+        except RuntimeError:
+            return asyncio.run(_run_verbose())
 
     # ── Public query API ──────────────────────────────────────────────────────
 

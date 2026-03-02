@@ -4,5 +4,13 @@ from .retrieve import tool_get_document, tool_get_document_structure, tool_get_p
 
 try:
     from .client import PageIndexClient
-except ImportError:
-    pass
+except ImportError as _e:
+    _import_error_msg = str(_e)
+
+    class PageIndexClient:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "PageIndexClient requires 'openai-agents'. "
+                "Install it with: pip install openai-agents\n"
+                f"(Original error: {_import_error_msg})"
+            )

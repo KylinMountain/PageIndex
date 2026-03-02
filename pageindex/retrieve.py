@@ -41,14 +41,16 @@ def _count_pages(doc_info: dict) -> int:
 
 
 def _get_pdf_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
-    """Extract text for specific PDF pages (1-indexed), reading only requested pages."""
+    """Extract text for specific PDF pages (1-indexed), opening the PDF once."""
     path = doc_info['path']
-    total = get_number_of_pages(path)
-    valid_pages = [p for p in page_nums if 1 <= p <= total]
-    if not valid_pages:
-        return []
-    pdf_reader = PyPDF2.PdfReader(path)
-    return [{'page': p, 'content': pdf_reader.pages[p - 1].extract_text()} for p in valid_pages]
+    with open(path, 'rb') as f:
+        pdf_reader = PyPDF2.PdfReader(f)
+        total = len(pdf_reader.pages)
+        valid_pages = [p for p in page_nums if 1 <= p <= total]
+        return [
+            {'page': p, 'content': pdf_reader.pages[p - 1].extract_text() or ''}
+            for p in valid_pages
+        ]
 
 
 def _get_md_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
@@ -77,18 +79,22 @@ def _get_md_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
 # ── Tool functions ────────────────────────────────────────────────────────────
 
 def tool_get_document(documents: dict, doc_id: str) -> str:
-    """Return JSON with document metadata: doc_id, doc_name, doc_description, type, status, page_count."""
+    """Return JSON with document metadata: doc_id, doc_name, doc_description, type, status, page_count (PDF) or line_count (Markdown)."""
     doc_info = documents.get(doc_id)
     if not doc_info:
         return json.dumps({'error': f'Document {doc_id} not found'})
-    return json.dumps({
+    result = {
         'doc_id': doc_id,
         'doc_name': doc_info.get('doc_name', ''),
         'doc_description': doc_info.get('doc_description', ''),
         'type': doc_info.get('type', ''),
         'status': 'completed',
-        'page_count': _count_pages(doc_info),
-    })
+    }
+    if doc_info.get('type') == 'pdf':
+        result['page_count'] = _count_pages(doc_info)
+    else:
+        result['line_count'] = _count_pages(doc_info)
+    return json.dumps(result)
 
 
 def tool_get_document_structure(documents: dict, doc_id: str) -> str:
@@ -120,9 +126,12 @@ def tool_get_page_content(documents: dict, doc_id: str, pages: str) -> str:
     except (ValueError, AttributeError) as e:
         return json.dumps({'error': f'Invalid pages format: {pages!r}. Use "5-7", "3,8", or "12". Error: {e}'})
 
-    if doc_info.get('type') == 'pdf':
-        content = _get_pdf_page_content(doc_info, page_nums)
-    else:
-        content = _get_md_page_content(doc_info, page_nums)
+    try:
+        if doc_info.get('type') == 'pdf':
+            content = _get_pdf_page_content(doc_info, page_nums)
+        else:
+            content = _get_md_page_content(doc_info, page_nums)
+    except Exception as e:
+        return json.dumps({'error': f'Failed to read page content: {e}'})
 
     return json.dumps(content, ensure_ascii=False)

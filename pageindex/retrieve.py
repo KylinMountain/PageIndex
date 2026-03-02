@@ -1,9 +1,10 @@
 import json
+import PyPDF2
 
 try:
-    from .utils import get_page_tokens, get_text_of_pdf_pages, get_number_of_pages, remove_fields, structure_to_list
+    from .utils import get_number_of_pages, remove_fields
 except ImportError:
-    from utils import get_page_tokens, get_text_of_pdf_pages, get_number_of_pages, remove_fields, structure_to_list
+    from utils import get_number_of_pages, remove_fields
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -40,14 +41,14 @@ def _count_pages(doc_info: dict) -> int:
 
 
 def _get_pdf_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
-    """Extract text for specific PDF pages (1-indexed)."""
-    pdf_pages = get_page_tokens(doc_info['path'])
-    total = len(pdf_pages)
-    results = []
-    for p in page_nums:
-        if 1 <= p <= total:
-            results.append({'page': p, 'content': pdf_pages[p - 1][0]})
-    return results
+    """Extract text for specific PDF pages (1-indexed), reading only requested pages."""
+    path = doc_info['path']
+    total = get_number_of_pages(path)
+    valid_pages = [p for p in page_nums if 1 <= p <= total]
+    if not valid_pages:
+        return []
+    pdf_reader = PyPDF2.PdfReader(path)
+    return [{'page': p, 'content': pdf_reader.pages[p - 1].extract_text()} for p in valid_pages]
 
 
 def _get_md_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:

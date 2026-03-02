@@ -3,15 +3,12 @@ import uuid
 import json
 import asyncio
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-
 from agents import Agent, Runner, function_tool
 from agents.stream_events import RunItemStreamEvent
 
 from .page_index import page_index
 from .page_index_md import md_to_tree
 from .retrieve import tool_get_document, tool_get_document_structure, tool_get_page_content
-from .utils import remove_fields, create_node_mapping
 
 AGENT_SYSTEM_PROMPT = """
 You are PageIndex, a document QA assistant.

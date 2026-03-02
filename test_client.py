@@ -19,9 +19,12 @@ WORKSPACE = "~/.pageindex"
 if not os.path.exists(PDF_PATH):
     print(f"Downloading {PDF_URL} ...")
     os.makedirs(os.path.dirname(PDF_PATH), exist_ok=True)
-    r = requests.get(PDF_URL)
-    with open(PDF_PATH, "wb") as f:
-        f.write(r.content)
+    with requests.get(PDF_URL, stream=True, timeout=30) as r:
+        r.raise_for_status()
+        with open(PDF_PATH, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
     print("Download complete.\n")
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -58,7 +61,7 @@ print("\n" + "=" * 60)
 print("Step 4: Persistence — reload without re-indexing")
 print("=" * 60)
 client2 = PageIndexClient(workspace=WORKSPACE)
-answer2 = client2.query_agent(doc_id, "What are the main conclusions of this paper?")
+answer2 = client2.query_agent(doc_id, "What are the main conclusions of this paper?", verbose=True)
 print("Answer from reloaded client:")
 print(answer2)
 print("\nPersistence verified. ✓")

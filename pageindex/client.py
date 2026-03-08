@@ -170,12 +170,11 @@ class PageIndexClient:
             model=self.model,
         )
 
-        if not verbose:
-            result = Runner.run_sync(agent, prompt)
-            return result.final_output
+        async def _run():
+            if not verbose:
+                result = await Runner.run(agent, prompt)
+                return result.final_output
 
-        # verbose mode: stream events and print tool calls
-        async def _run_verbose():
             turn = 0
             stream = Runner.run_streamed(agent, prompt)
             async for event in stream.stream_events():
@@ -196,9 +195,9 @@ class PageIndexClient:
             asyncio.get_running_loop()
             # Inside a running event loop (e.g. Jupyter) — run in a thread
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, _run_verbose()).result()
+                return pool.submit(asyncio.run, _run()).result()
         except RuntimeError:
-            return asyncio.run(_run_verbose())
+            return asyncio.run(_run())
 
     # ── Public query API ──────────────────────────────────────────────────────
 

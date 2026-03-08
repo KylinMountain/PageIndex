@@ -5,11 +5,13 @@ import asyncio
 import concurrent.futures
 from pathlib import Path
 from agents import Agent, Runner, function_tool
+from agents.extensions.models.litellm_model import LitellmModel
 from agents.stream_events import RunItemStreamEvent
 
 from .page_index import page_index
 from .page_index_md import md_to_tree
 from .retrieve import tool_get_document, tool_get_document_structure, tool_get_page_content
+from .utils import ConfigLoader
 
 AGENT_SYSTEM_PROMPT = """
 You are PageIndex, a document QA assistant.
@@ -28,12 +30,10 @@ class PageIndexClient:
     Uses an OpenAI Agents SDK agent with 3 tools to answer document questions.
     Flow: Index -> query_agent (tool-use loop) -> Answer
     """
-    def __init__(self, api_key: str = None, model: str = "gpt-4o-2024-11-20", workspace: str = None):
-        self.api_key = api_key or os.getenv("CHATGPT_API_KEY")
-        if self.api_key:
-            os.environ["CHATGPT_API_KEY"] = self.api_key
-            os.environ["OPENAI_API_KEY"] = self.api_key
-        self.model = model
+    def __init__(self, api_key: str = None, model: str = None, workspace: str = None):
+        if api_key:
+            os.environ["OPENAI_API_KEY"] = api_key
+        self.model = model or ConfigLoader().load().model
         self.workspace = Path(workspace).expanduser() if workspace else None
         if self.workspace:
             self.workspace.mkdir(parents=True, exist_ok=True)
@@ -167,15 +167,14 @@ class PageIndexClient:
             name="PageIndex",
             instructions=AGENT_SYSTEM_PROMPT,
             tools=[get_document, get_document_structure, get_page_content],
-            model=self.model,
+            model=LitellmModel(model=self.model),
         )
 
-        if not verbose:
-            result = Runner.run_sync(agent, prompt)
-            return result.final_output
+        async def _run():
+            if not verbose:
+                result = await Runner.run(agent, prompt)
+                return result.final_output
 
-        # verbose mode: stream events and print tool calls
-        async def _run_verbose():
             turn = 0
             stream = Runner.run_streamed(agent, prompt)
             async for event in stream.stream_events():
@@ -192,13 +191,22 @@ class PageIndexClient:
                     print(f"         ← {preview}")
             return stream.final_output
 
+        async def _run_and_cleanup():
+            result = await _run()
+            try:
+                from litellm.utils import close_litellm_async_clients
+                await close_litellm_async_clients()
+            except Exception:
+                pass
+            return result
+
         try:
             asyncio.get_running_loop()
             # Inside a running event loop (e.g. Jupyter) — run in a thread
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, _run_verbose()).result()
+                return pool.submit(asyncio.run, _run_and_cleanup()).result()
         except RuntimeError:
-            return asyncio.run(_run_verbose())
+            return asyncio.run(_run_and_cleanup())
 
     # ── Public query API ──────────────────────────────────────────────────────
 

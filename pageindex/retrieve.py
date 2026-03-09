@@ -78,7 +78,7 @@ def _get_md_page_content(doc_info: dict, page_nums: list[int]) -> list[dict]:
 
 # ── Tool functions ────────────────────────────────────────────────────────────
 
-def tool_get_document(documents: dict, doc_id: str) -> str:
+def get_document(documents: dict, doc_id: str) -> str:
     """Return JSON with document metadata: doc_id, doc_name, doc_description, type, status, page_count (PDF) or line_count (Markdown)."""
     doc_info = documents.get(doc_id)
     if not doc_info:
@@ -97,7 +97,7 @@ def tool_get_document(documents: dict, doc_id: str) -> str:
     return json.dumps(result)
 
 
-def tool_get_document_structure(documents: dict, doc_id: str) -> str:
+def get_document_structure(documents: dict, doc_id: str) -> str:
     """Return tree structure JSON with text fields removed (saves tokens)."""
     doc_info = documents.get(doc_id)
     if not doc_info:
@@ -107,7 +107,7 @@ def tool_get_document_structure(documents: dict, doc_id: str) -> str:
     return json.dumps(structure_no_text, ensure_ascii=False)
 
 
-def tool_get_page_content(documents: dict, doc_id: str, pages: str) -> str:
+def get_page_content(documents: dict, doc_id: str, pages: str) -> str:
     """
     Retrieve page content for a document.
 

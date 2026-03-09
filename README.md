@@ -147,12 +147,14 @@ You can follow these steps to generate a PageIndex tree from a PDF document.
 pip3 install --upgrade -r requirements.txt
 ```
 
-### 2. Set your OpenAI API key
+### 2. Set your API key
 
 Create a `.env` file in the root directory and add your API key:
 
 ```bash
-CHATGPT_API_KEY=your_openai_key_here
+OPENAI_API_KEY=your_openai_key_here
+# or
+CHATGPT_API_KEY=your_openai_key_here  # legacy, still supported
 ```
 
 ### 3. Run PageIndex on your PDF
@@ -189,7 +191,41 @@ python3 run_pageindex.py --md_path /path/to/your/document.md
 > Note: in this function, we use "#" to determine node heading and their levels. For example, "##" is level 2, "###" is level 3, etc. Make sure your markdown file is formatted correctly. If your Markdown file was converted from a PDF or HTML, we don't recommend using this function, since most existing conversion tools cannot preserve the original hierarchy. Instead, use our [PageIndex OCR](https://pageindex.ai/blog/ocr), which is designed to preserve the original hierarchy, to convert the PDF to a markdown file and then use this function.
 </details>
 
-<!-- 
+---
+
+# 🐍 Python API
+
+### Index & Retrieve
+
+```python
+from pageindex import PageIndexClient
+
+client = PageIndexClient(workspace="~/.pageindex")
+
+# Index a document (PDF or Markdown)
+doc_id = client.index("path/to/document.pdf")
+
+# Retrieve
+client.get_document(doc_id)            # metadata: name, type, page count
+client.get_document_structure(doc_id)  # full tree structure
+client.get_page_content(doc_id, pages="5-7")  # page content
+```
+
+### Agent-based QA (OpenAI Agents)
+
+For a complete agent QA example using the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python), see [`examples/openai_agents_demo.py`](examples/openai_agents_demo.py).
+
+```bash
+# Install optional dependency
+pip install openai-agents
+
+# Run the demo
+python examples/openai_agents_demo.py
+```
+
+---
+
+<!--
 # ☁️ Improved Tree Generation with PageIndex OCR
 
 This repo is designed for generating PageIndex tree structure for simple PDFs, but many real-world use cases involve complex PDFs that are hard to parse by classic Python tools. However, extracting high-quality text from PDF documents remains a non-trivial challenge. Most OCR tools only extract page-level content, losing the broader document context and hierarchy.

@@ -263,7 +263,7 @@ def toc_index_extractor(toc, content, model=None):
     If the section is not in the provided pages, do not add the physical_index to it.
     Directly return the final JSON structure. Do not output anything else."""
 
-    prompt = tob_extractor_prompt + '\nTable of contents:\n' + str(toc) + '\nDocument pages:\n' + content
+    prompt = toc_extractor_prompt + '\nTable of contents:\n' + str(toc) + '\nDocument pages:\n' + content
     response = llm_complete(model=model, prompt=prompt)
     json_content = extract_json(response)    
     return json_content
@@ -745,7 +745,7 @@ def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20
     }
     Directly return the final JSON structure. Do not output anything else."""
 
-    prompt = tob_extractor_prompt + '\nSection Title:\n' + str(section_title) + '\nDocument pages:\n' + content
+    prompt = toc_extractor_prompt + '\nSection Title:\n' + str(section_title) + '\nDocument pages:\n' + content
     response = llm_complete(model=model, prompt=prompt)
     json_content = extract_json(response)    
     return convert_physical_index_to_int(json_content['physical_index'])

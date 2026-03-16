@@ -73,8 +73,7 @@ async def allm_complete(model, prompt):
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
-            response = await asyncio.to_thread(
-                litellm.completion,
+            response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 temperature=0,

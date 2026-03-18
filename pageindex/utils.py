@@ -22,7 +22,6 @@ if not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
 
 litellm.drop_params = True
 
-
 def count_tokens(text, model=None):
     if not text:
         return 0
@@ -51,7 +50,9 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False)
                 time.sleep(1)
             else:
                 logging.error('Max retries reached for prompt: ' + prompt)
-                return "", "error"
+                if return_finish_reason:
+                    return "", "error"
+                return ""
 
 
 

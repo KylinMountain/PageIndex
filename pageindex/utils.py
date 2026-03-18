@@ -29,7 +29,7 @@ def count_tokens(text, model=None):
     return litellm.token_counter(model=model, text=text)
 
 
-def llm_complete(model, prompt, chat_history=None, return_finish_reason=False):
+def llm_completion(model, prompt, chat_history=None, return_finish_reason=False):
     max_retries = 10
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
     for i in range(max_retries):
@@ -54,21 +54,8 @@ def llm_complete(model, prompt, chat_history=None, return_finish_reason=False):
                 return "", "error"
 
 
-def llm_complete_stream(model, prompt):
-    """Return a generator that yields token chunks (str) one at a time."""
-    response = litellm.completion(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-        stream=True,
-    )
-    for chunk in response:
-        delta = chunk.choices[0].delta.content
-        if delta:
-            yield delta
 
-
-async def allm_complete(model, prompt):
+async def llm_acompletion(model, prompt):
     max_retries = 10
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
@@ -589,7 +576,7 @@ async def generate_node_summary(node, model=None):
     
     Directly return the description, do not include any other text.
     """
-    response = await allm_complete(model, prompt)
+    response = await llm_acompletion(model, prompt)
     return response
 
 
@@ -634,7 +621,7 @@ def generate_doc_description(structure, model=None):
     
     Directly return the description, do not include any other text.
     """
-    response = llm_complete(model, prompt)
+    response = llm_completion(model, prompt)
     return response
 
 

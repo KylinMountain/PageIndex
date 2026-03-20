@@ -732,7 +732,7 @@ def check_toc(page_list, opt=None):
 
 
 ################### fix incorrect toc #########################################################
-def single_toc_item_index_fixer(section_title, content, model=None):
+async def single_toc_item_index_fixer(section_title, content, model=None):
     toc_extractor_prompt = """
     You are given a section title and several pages of a document, your job is to find the physical index of the start page of the section in the partial document.
 
@@ -746,7 +746,7 @@ def single_toc_item_index_fixer(section_title, content, model=None):
     Directly return the final JSON structure. Do not output anything else."""
 
     prompt = toc_extractor_prompt + '\nSection Title:\n' + str(section_title) + '\nDocument pages:\n' + content
-    response = llm_completion(model=model, prompt=prompt)
+    response = await llm_acompletion(model=model, prompt=prompt)
     json_content = extract_json(response)    
     return convert_physical_index_to_int(json_content['physical_index'])
 
@@ -815,7 +815,7 @@ async def fix_incorrect_toc(toc_with_page_number, page_list, incorrect_results, 
                 continue
         content_range = ''.join(page_contents)
         
-        physical_index_int = single_toc_item_index_fixer(incorrect_item['title'], content_range, model)
+        physical_index_int = await single_toc_item_index_fixer(incorrect_item['title'], content_range, model)
         
         # Check if the result is correct
         check_item = incorrect_item.copy()

@@ -74,7 +74,7 @@ async def llm_acompletion(model, prompt):
                 await asyncio.sleep(1)
             else:
                 logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
+                return ""
             
             
 def get_json_content(response):
@@ -501,7 +501,7 @@ def remove_structure_text(data):
 def check_token_limit(structure, limit=110000):
     list = structure_to_list(structure)
     for node in list:
-        num_tokens = count_tokens(node['text'], model='gpt-4o')
+        num_tokens = count_tokens(node['text'], model=None)
         if num_tokens > limit:
             print(f"Node ID: {node['node_id']} has {num_tokens} tokens")
             print("Start Index:", node['start_index'])

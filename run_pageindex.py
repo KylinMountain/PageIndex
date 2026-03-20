@@ -3,6 +3,7 @@ import os
 import json
 from pageindex import *
 from pageindex.page_index_md import md_to_tree
+from pageindex.utils import ConfigLoader
 
 if __name__ == "__main__":
     # Set up argument parser
@@ -51,7 +52,6 @@ if __name__ == "__main__":
             raise ValueError(f"PDF file not found: {args.pdf_path}")
             
         # Process PDF file
-        from pageindex.utils import ConfigLoader
         user_opt = {
             'model': args.model,
             'toc_check_page_num': args.toc_check_pages,

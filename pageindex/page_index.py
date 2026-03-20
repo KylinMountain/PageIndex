@@ -300,7 +300,12 @@ def toc_transformer(toc_content, model=None):
         return cleaned_response
     
     last_complete = get_json_content(last_complete)
+    attempt = 0
+    max_attempts = 5
     while not (if_complete == "yes" and finish_reason == "finished"):
+        attempt += 1
+        if attempt > max_attempts:
+            raise Exception('Failed to complete toc transformation after maximum retries')
         position = last_complete.rfind('}')
         if position != -1:
             last_complete = last_complete[:position+2]

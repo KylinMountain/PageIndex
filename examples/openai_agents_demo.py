@@ -82,7 +82,7 @@ def query_agent(
         name="PageIndex",
         instructions=AGENT_SYSTEM_PROMPT,
         tools=[get_document, get_document_structure, get_page_content],
-        model=client.model,
+        model=client.retrieve_model,
     )
 
     async def _run():

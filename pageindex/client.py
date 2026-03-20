@@ -17,14 +17,20 @@ class PageIndexClient:
 
     For agent-based QA, see examples/openai_agents_demo.py.
     """
-    def __init__(self, api_key: str = None, model: str = None, workspace: str = None):
+    def __init__(self, api_key: str = None, model: str = None, retrieve_model: str = None, workspace: str = None):
         if api_key:
             os.environ["OPENAI_API_KEY"] = api_key
         elif not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
             os.environ["OPENAI_API_KEY"] = os.getenv("CHATGPT_API_KEY")
         self.workspace = Path(workspace).expanduser() if workspace else None
-        opt = ConfigLoader().load({"model": model} if model else {})
+        overrides = {}
+        if model:
+            overrides["model"] = model
+        if retrieve_model:
+            overrides["retrieve_model"] = retrieve_model
+        opt = ConfigLoader().load(overrides or None)
         self.model = opt.model
+        self.retrieve_model = opt.retrieve_model or self.model
         if self.workspace:
             self.workspace.mkdir(parents=True, exist_ok=True)
         self.documents = {}

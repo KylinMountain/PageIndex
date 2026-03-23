@@ -101,9 +101,7 @@ def query_agent(
             elif isinstance(event, RunItemStreamEvent):
                 item = event.item
                 if item.type == "message_output_item":
-                    if streamed_this_turn:
-                        print()
-                    else:
+                    if not streamed_this_turn:
                         text = ItemHelpers.text_message_output(item)
                         if text:
                             print(f"{text}")

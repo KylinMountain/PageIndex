@@ -147,9 +147,9 @@ You can follow these steps to generate a PageIndex tree from a PDF document.
 pip3 install --upgrade -r requirements.txt
 ```
 
-### 2. Set your API key
+### 2. Set your LLM API key
 
-Create a `.env` file in the root directory and add your API key:
+Create a `.env` file in the root directory with your LLM API key::
 
 ```bash
 OPENAI_API_KEY=your_openai_key_here
@@ -191,7 +191,7 @@ python3 run_pageindex.py --md_path /path/to/your/document.md
 > Note: in this function, we use "#" to determine node heading and their levels. For example, "##" is level 2, "###" is level 3, etc. Make sure your markdown file is formatted correctly. If your Markdown file was converted from a PDF or HTML, we don't recommend using this function, since most existing conversion tools cannot preserve the original hierarchy. Instead, use our [PageIndex OCR](https://pageindex.ai/blog/ocr), which is designed to preserve the original hierarchy, to convert the PDF to a markdown file and then use this function.
 </details>
 
-### 4. Agentic RAG Example
+### A Complete Agentic RAG Example
 
 For a complete agent-based QA example using the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python), see [`examples/openai_agents_demo.py`](examples/openai_agents_demo.py).
 

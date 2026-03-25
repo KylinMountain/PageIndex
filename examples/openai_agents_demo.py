@@ -113,11 +113,11 @@ def query_agent(
                     raw = item.raw_item
                     args = getattr(raw, "arguments", "{}")
                     args_str = f"({args})" if verbose else ""
-                    print(f"[tool] {raw.name}{args_str}")
+                    print(f"[tool call]: {raw.name}{args_str}")
                 elif item.type == "tool_call_output_item" and verbose:
                     output = str(item.output)
                     preview = output[:200] + "..." if len(output) > 200 else output
-                    print(f"[output] {preview}\n")
+                    print(f"[tool output]: {preview}\n")
         return "".join(collected)
 
     try:

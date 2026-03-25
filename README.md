@@ -157,7 +157,7 @@ OPENAI_API_KEY=your_openai_key_here
 CHATGPT_API_KEY=your_openai_key_here  # legacy, still supported
 ```
 
-### 3. Run PageIndex on your PDF
+### 3. Generate PageIndex structure for your PDF
 
 ```bash
 python3 run_pageindex.py --pdf_path /path/to/your/document.pdf
@@ -191,36 +191,16 @@ python3 run_pageindex.py --md_path /path/to/your/document.md
 > Note: in this function, we use "#" to determine node heading and their levels. For example, "##" is level 2, "###" is level 3, etc. Make sure your markdown file is formatted correctly. If your Markdown file was converted from a PDF or HTML, we don't recommend using this function, since most existing conversion tools cannot preserve the original hierarchy. Instead, use our [PageIndex OCR](https://pageindex.ai/blog/ocr), which is designed to preserve the original hierarchy, to convert the PDF to a markdown file and then use this function.
 </details>
 
----
+### 4. Agentic RAG Example
 
-# 🐍 Python API
-
-### Index & Retrieve
-
-```python
-from pageindex import PageIndexClient
-
-client = PageIndexClient(workspace="~/.pageindex")
-
-# Index a document (PDF or Markdown)
-doc_id = client.index("path/to/document.pdf")
-
-# Retrieve
-client.get_document(doc_id)            # metadata: name, type, page count
-client.get_document_structure(doc_id)  # full tree structure
-client.get_page_content(doc_id, pages="5-7")  # page content
-```
-
-### Agent-based QA (OpenAI Agents)
-
-For a complete agent QA example using the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python), see [`examples/openai_agents_demo.py`](examples/openai_agents_demo.py).
+For a complete agent-based QA example using the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python), see [`examples/openai_agents_demo.py`](examples/openai_agents_demo.py).
 
 ```bash
 # Install optional dependency
-pip install openai-agents
+pip3 install openai-agents
 
 # Run the demo
-python examples/openai_agents_demo.py
+python3 examples/openai_agents_demo.py
 ```
 
 ---

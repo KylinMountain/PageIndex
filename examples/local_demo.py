@@ -1,0 +1,60 @@
+"""
+PageIndex Local Demo
+
+Usage:
+    pip install pageindex
+    python examples/local_demo.py
+"""
+import asyncio
+from pathlib import Path
+import requests
+from pageindex import LocalClient
+
+_DIR = Path(__file__).parent
+PDF_URL = "https://arxiv.org/pdf/1706.03762.pdf"
+PDF_PATH = _DIR / "documents" / "attention.pdf"
+WORKSPACE = _DIR / "workspace"
+
+# Download PDF if needed
+if not PDF_PATH.exists():
+    print(f"Downloading {PDF_URL} ...")
+    PDF_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with requests.get(PDF_URL, stream=True, timeout=30) as r:
+        r.raise_for_status()
+        with open(PDF_PATH, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+    print("Download complete.\n")
+
+client = LocalClient(storage_path=str(WORKSPACE))
+col = client.collection()
+
+doc_id = col.add(str(PDF_PATH))
+print(f"Indexed: {doc_id}\n")
+
+# Streaming query
+stream = col.query(
+    "What is the main architecture proposed in this paper and how does self-attention work?",
+    stream=True,
+)
+
+async def main():
+    streamed_text = False
+    async for event in stream:
+        if event.type == "answer_delta":
+            print(event.data, end="", flush=True)
+            streamed_text = True
+        elif event.type == "tool_call":
+            if streamed_text:
+                print()
+                streamed_text = False
+            print(f"[tool call] {event.data['name']}")
+        elif event.type == "tool_result":
+            preview = str(event.data)[:200] + "..." if len(str(event.data)) > 200 else event.data
+            print(f"[tool output] {preview}")
+        elif event.type == "answer_done":
+            print()
+            streamed_text = False
+
+asyncio.run(main())

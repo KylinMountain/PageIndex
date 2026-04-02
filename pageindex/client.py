@@ -1,9 +1,8 @@
 # pageindex/client.py
 from __future__ import annotations
-import os
 from pathlib import Path
 from .collection import Collection
-from .config import ConfigLoader
+from .config import IndexConfig
 from .parser.protocol import DocumentParser
 
 
@@ -42,17 +41,51 @@ class PageIndexClient:
         from .backend.cloud import CloudBackend
         self._backend = CloudBackend(api_key=api_key)
 
-    def _init_local(self, model: str = None, retrieve_model: str = None,
-                    storage_path: str = None, storage=None):
-        if not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
-            os.environ["OPENAI_API_KEY"] = os.getenv("CHATGPT_API_KEY")
+    @staticmethod
+    def _check_llm_api_key(model: str) -> None:
+        """Verify that the LLM provider's API key is configured."""
+        import os
+        try:
+            import litellm
+            _, provider, _, _ = litellm.get_llm_provider(model=model)
+        except Exception:
+            return  # Can't resolve provider — let litellm fail later with details
 
+        provider_env = {
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "azure": "AZURE_API_KEY",
+            "cohere": "COHERE_API_KEY",
+            "replicate": "REPLICATE_API_KEY",
+            "huggingface": "HUGGINGFACE_API_KEY",
+        }
+        env_var = provider_env.get(provider)
+        if env_var and not os.getenv(env_var):
+            from .errors import PageIndexError
+            raise PageIndexError(
+                f"API key not found. Set the {env_var} environment variable "
+                f"for provider '{provider}' (model: {model})."
+            )
+
+    def _init_local(self, model: str = None, retrieve_model: str = None,
+                    storage_path: str = None, storage=None,
+                    index_config: IndexConfig | dict = None):
+        # Build IndexConfig: merge model/retrieve_model with index_config
         overrides = {}
         if model:
             overrides["model"] = model
         if retrieve_model:
             overrides["retrieve_model"] = retrieve_model
-        opt = ConfigLoader().load(overrides or None)
+        if isinstance(index_config, IndexConfig):
+            opt = index_config.model_copy(update=overrides)
+        elif isinstance(index_config, dict):
+            overrides.update(index_config)
+            opt = IndexConfig(**overrides)
+        else:
+            opt = IndexConfig(**overrides) if overrides else IndexConfig()
+
+        # Early validation: check API key before any expensive operations
+        self._check_llm_api_key(opt.model)
 
         storage_path = Path(storage_path or "~/.pageindex").expanduser()
         storage_path.mkdir(parents=True, exist_ok=True)
@@ -65,6 +98,7 @@ class PageIndexClient:
             files_dir=str(storage_path / "files"),
             model=opt.model,
             retrieve_model=_normalize_retrieve_model(opt.retrieve_model or opt.model),
+            index_config=opt,
         )
 
     def collection(self, name: str = "default") -> Collection:
@@ -87,11 +121,33 @@ class PageIndexClient:
 
 
 class LocalClient(PageIndexClient):
-    """Local mode — indexes and queries documents on your machine."""
+    """Local mode — indexes and queries documents on your machine.
+
+    Args:
+        model: LLM model for indexing (default: gpt-4o-2024-11-20)
+        retrieve_model: LLM model for agent QA (default: same as model)
+        storage_path: Directory for SQLite DB and files (default: ~/.pageindex)
+        storage: Custom StorageEngine instance (default: SQLiteStorage)
+        index_config: Advanced indexing parameters. Pass an IndexConfig instance
+            or a dict. All fields have sensible defaults — most users don't need this.
+
+    Example::
+
+        # Simple — defaults are fine
+        client = LocalClient(model="gpt-5.4")
+
+        # Advanced — tune indexing parameters
+        from pageindex.config import IndexConfig
+        client = LocalClient(
+            model="gpt-5.4",
+            index_config=IndexConfig(toc_check_page_num=30),
+        )
+    """
 
     def __init__(self, model: str = None, retrieve_model: str = None,
-                 storage_path: str = None, storage=None):
-        self._init_local(model, retrieve_model, storage_path, storage)
+                 storage_path: str = None, storage=None,
+                 index_config: IndexConfig | dict = None):
+        self._init_local(model, retrieve_model, storage_path, storage, index_config)
 
 
 class CloudClient(PageIndexClient):

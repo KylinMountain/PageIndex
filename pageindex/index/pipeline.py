@@ -58,10 +58,10 @@ def build_index(parsed: ParsedDocument, model: str = None, opt=None) -> dict:
     from .utils import (write_node_id, add_node_text, remove_structure_text,
                         generate_summaries_for_structure, generate_doc_description,
                         create_clean_structure_for_description)
-    from ..config import ConfigLoader
+    from ..config import IndexConfig
 
     if opt is None:
-        opt = ConfigLoader().load({"model": model} if model else None)
+        opt = IndexConfig(model=model) if model else IndexConfig()
 
     nodes = parsed.nodes
     strategy = detect_strategy(nodes)
@@ -75,18 +75,17 @@ def build_index(parsed: ParsedDocument, model: str = None, opt=None) -> dict:
         structure = _run_async(_content_based_pipeline(page_list, opt))
 
     # Unified enhancement
-    if opt.if_add_node_id == "yes":
+    if opt.if_add_node_id:
         write_node_id(structure)
 
     if strategy != "level_based":
-        # For content-based, add text from page_list (reuse already-computed page_list)
-        if opt.if_add_node_text == "yes" or opt.if_add_node_summary == "yes":
+        if opt.if_add_node_text or opt.if_add_node_summary:
             add_node_text(structure, page_list)
 
-    if opt.if_add_node_summary == "yes":
+    if opt.if_add_node_summary:
         _run_async(generate_summaries_for_structure(structure, model=opt.model))
 
-        if opt.if_add_node_text == "no" and strategy != "level_based":
+        if not opt.if_add_node_text and strategy != "level_based":
             remove_structure_text(structure)
 
     result = {
@@ -94,7 +93,7 @@ def build_index(parsed: ParsedDocument, model: str = None, opt=None) -> dict:
         "structure": structure,
     }
 
-    if opt.if_add_doc_description == "yes":
+    if opt.if_add_doc_description:
         clean_structure = create_clean_structure_for_description(structure)
         result["doc_description"] = generate_doc_description(
             clean_structure, model=opt.model

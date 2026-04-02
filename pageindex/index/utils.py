@@ -388,7 +388,10 @@ def parse_pages(pages: str) -> list[int]:
         else:
             result.append(int(part))
     result = [p for p in result if p >= 1]
-    return sorted(set(result))
+    result = sorted(set(result))
+    if len(result) > 1000:
+        raise ValueError(f"Page range too large: {len(result)} pages (max 1000)")
+    return result
 
 
 def get_pdf_page_content(file_path: str, page_nums: list[int]) -> list[dict]:

@@ -9,6 +9,8 @@ class SQLiteStorage:
         self._db_path = Path(db_path).expanduser()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        self._connections: list[sqlite3.Connection] = []
+        self._conn_lock = threading.Lock()
         self._init_schema()
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -18,6 +20,8 @@ class SQLiteStorage:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
             self._local.conn = conn
+            with self._conn_lock:
+                self._connections.append(conn)
         return self._local.conn
 
     def _init_schema(self):
@@ -134,10 +138,23 @@ class SQLiteStorage:
         )
         conn.commit()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
     def close(self) -> None:
-        """Close the thread-local SQLite connection if it exists."""
+        """Close all tracked SQLite connections across all threads."""
+        with self._conn_lock:
+            for conn in self._connections:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._connections.clear()
         if hasattr(self._local, "conn"):
-            self._local.conn.close()
             del self._local.conn
 
     def __del__(self):

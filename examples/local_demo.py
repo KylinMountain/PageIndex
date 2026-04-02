@@ -1,19 +1,25 @@
 """
-PageIndex Local Demo
+Agentic Vectorless RAG with PageIndex SDK - Local Demo
 
-Usage:
-    pip install pageindex
-    python examples/local_demo.py
+A simple example of using LocalClient for self-hosted document indexing
+and agent-based QA. The agent uses OpenAI Agents SDK to reason over
+the document's tree structure index.
+
+Steps:
+  1 — Download and index a PDF
+  2 — Stream a question with tool call visibility
+
+Requirements: pip install pageindex openai-agents
 """
 import asyncio
 from pathlib import Path
 import requests
 from pageindex import LocalClient
 
-_DIR = Path(__file__).parent
+_EXAMPLES_DIR = Path(__file__).parent
 PDF_URL = "https://arxiv.org/pdf/1706.03762.pdf"
-PDF_PATH = _DIR / "documents" / "attention.pdf"
-WORKSPACE = _DIR / "workspace"
+PDF_PATH = _EXAMPLES_DIR / "documents" / "attention.pdf"
+WORKSPACE = _EXAMPLES_DIR / "workspace"
 
 # Download PDF if needed
 if not PDF_PATH.exists():

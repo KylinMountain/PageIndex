@@ -1,10 +1,16 @@
 """
-PageIndex Cloud Demo
+Agentic Vectorless RAG with PageIndex SDK - Cloud Demo
 
-Usage:
+Uses CloudClient for fully-managed document indexing and QA.
+No LLM API key needed — the cloud service handles everything.
+
+Steps:
+  1 — Upload and index a PDF via PageIndex cloud
+  2 — Stream a question with tool call visibility
+
+Requirements:
     pip install pageindex
     export PAGEINDEX_API_KEY=your-api-key
-    python examples/cloud_demo.py
 """
 import asyncio
 import os
@@ -12,9 +18,9 @@ from pathlib import Path
 import requests
 from pageindex import CloudClient
 
-_DIR = Path(__file__).parent
+_EXAMPLES_DIR = Path(__file__).parent
 PDF_URL = "https://arxiv.org/pdf/1706.03762.pdf"
-PDF_PATH = _DIR / "documents" / "attention.pdf"
+PDF_PATH = _EXAMPLES_DIR / "documents" / "attention.pdf"
 
 # Download PDF if needed
 if not PDF_PATH.exists():

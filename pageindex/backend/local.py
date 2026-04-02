@@ -1,6 +1,7 @@
 # pageindex/backend/local.py
 import hashlib
 import os
+import re
 import uuid
 import shutil
 from pathlib import Path
@@ -12,17 +13,19 @@ from ..storage.protocol import StorageEngine
 from ..index.pipeline import build_index
 from ..index.utils import parse_pages, get_pdf_page_content, get_md_page_content, remove_fields
 from ..backend.protocol import AgentTools
-from ..errors import FileTypeError, DocumentNotFoundError, IndexingError
+from ..errors import FileTypeError, DocumentNotFoundError, IndexingError, PageIndexError
+
+_COLLECTION_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]{1,128}$')
 
 
 class LocalBackend:
     def __init__(self, storage: StorageEngine, files_dir: str, model: str = None,
-                 retrieve_model: str = None, api_key: str = None):
+                 retrieve_model: str = None, index_config=None):
         self._storage = storage
         self._files_dir = Path(files_dir)
         self._model = model
         self._retrieve_model = retrieve_model or model
-        self._api_key = api_key
+        self._index_config = index_config
         self._parsers: list[DocumentParser] = [PdfParser(), MarkdownParser()]
 
     def register_parser(self, parser: DocumentParser) -> None:
@@ -39,10 +42,16 @@ class LocalBackend:
         raise FileTypeError(f"No parser for extension: {ext}")
 
     # Collection management
+    def _validate_collection_name(self, name: str) -> None:
+        if not _COLLECTION_NAME_RE.match(name):
+            raise PageIndexError(f"Invalid collection name: {name!r}. Must be 1-128 chars of [a-zA-Z0-9_-].")
+
     def create_collection(self, name: str) -> None:
+        self._validate_collection_name(name)
         self._storage.create_collection(name)
 
     def get_or_create_collection(self, name: str) -> None:
+        self._validate_collection_name(name)
         self._storage.get_or_create_collection(name)
 
     def list_collections(self) -> list[str]:
@@ -87,21 +96,26 @@ class LocalBackend:
 
         try:
             parsed = parser.parse(file_path, model=self._model)
-            result = build_index(parsed, model=self._model)
+            result = build_index(parsed, model=self._model, opt=self._index_config)
 
             # Cache page text for fast retrieval (avoids re-reading files)
             pages = [{"page": n.index, "content": n.content}
                      for n in parsed.nodes if n.content]
 
-            # Strip text from structure to save storage space
-            clean_structure = remove_fields(result["structure"], fields=["text"])
+            # Strip text from structure to save storage space (PDF only;
+            # markdown needs text in structure for fallback retrieval)
+            doc_type = ext.lstrip(".")
+            if doc_type == "pdf":
+                clean_structure = remove_fields(result["structure"], fields=["text"])
+            else:
+                clean_structure = result["structure"]
 
             self._storage.save_document(collection, doc_id, {
                 "doc_name": parsed.doc_name,
                 "doc_description": result.get("doc_description", ""),
                 "file_path": str(managed_path),
                 "file_hash": file_hash,
-                "doc_type": ext.lstrip("."),
+                "doc_type": doc_type,
                 "structure": clean_structure,
                 "pages": pages,
             })

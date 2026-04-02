@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Protocol, Any, AsyncIterator
+from typing import Protocol, Any, AsyncIterator, runtime_checkable
 
 from ..events import QueryEvent
 
@@ -12,6 +12,7 @@ class AgentTools:
     mcp_servers: list[Any] = field(default_factory=list)
 
 
+@runtime_checkable
 class Backend(Protocol):
     # Collection management
     def create_collection(self, name: str) -> None: ...

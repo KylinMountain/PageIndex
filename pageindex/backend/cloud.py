@@ -20,11 +20,14 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.pageindex.ai"
 
+_INTERNAL_TOOLS = frozenset({"ToolSearch", "Read", "Grep", "Glob", "Bash", "Edit", "Write"})
+
 
 class CloudBackend:
     def __init__(self, api_key: str):
         self._api_key = api_key
         self._headers = {"api_key": api_key}
+        self._folder_id_cache: dict[str, str | None] = {}
 
     # ── HTTP helpers ──────────────────────────────────────────────────────
 
@@ -38,7 +41,8 @@ class CloudBackend:
                     time.sleep(2 ** attempt)
                     continue
                 if resp.status_code != 200:
-                    raise CloudAPIError(f"Cloud API error {resp.status_code}: {resp.text}")
+                    body = resp.text[:500] if resp.text else ""
+                    raise CloudAPIError(f"Cloud API error {resp.status_code}: {body}")
                 return resp.json() if resp.content else {}
             except requests.RequestException as e:
                 if attempt == 2:
@@ -63,12 +67,14 @@ class CloudBackend:
     def create_collection(self, name: str) -> None:
         self._validate_collection_name(name)
         try:
-            self._request("POST", "/folder/", json={"name": name})
+            resp = self._request("POST", "/folder/", json={"name": name})
+            self._folder_id_cache[name] = resp.get("folder", {}).get("id")
         except CloudAPIError as e:
             if "403" in str(e):
                 logger.warning(
                     "Folders require a Max plan. Upgrade at https://dash.pageindex.ai/subscription"
                 )
+                self._folder_id_cache[name] = None
             else:
                 raise
 
@@ -78,31 +84,33 @@ class CloudBackend:
             data = self._request("GET", "/folders/")
             for folder in data.get("folders", []):
                 if folder.get("name") == name:
-                    self._folder_id_cache = folder["id"]
+                    self._folder_id_cache[name] = folder["id"]
                     return
             resp = self._request("POST", "/folder/", json={"name": name})
-            self._folder_id_cache = resp.get("folder", {}).get("id")
+            self._folder_id_cache[name] = resp.get("folder", {}).get("id")
         except CloudAPIError as e:
             if "403" in str(e):
                 logger.warning(
                     "Folders require a Max plan. Documents will be stored without folder organization. "
                     "Upgrade at https://dash.pageindex.ai/subscription"
                 )
-                self._folder_id_cache = None
+                self._folder_id_cache[name] = None
             else:
                 raise
 
     def _get_folder_id(self, name: str) -> str | None:
         """Resolve collection name to folder ID. Returns None if folders not available."""
-        if hasattr(self, '_folder_id_cache'):
-            return self._folder_id_cache
+        if name in self._folder_id_cache:
+            return self._folder_id_cache.get(name)
         try:
             data = self._request("GET", "/folders/")
             for folder in data.get("folders", []):
                 if folder.get("name") == name:
+                    self._folder_id_cache[name] = folder["id"]
                     return folder["id"]
         except CloudAPIError:
             pass
+        self._folder_id_cache[name] = None
         return None
 
     def list_collections(self) -> list[str]:
@@ -204,67 +212,90 @@ class CloudBackend:
         - mcp_tool_use_start: tool call started (has tool_name, server_name)
         - tool_use: tool call argument delta
         - tool_use_stop: tool call ended
+
+        Note: Uses synchronous ``requests`` under the hood.  The blocking
+        HTTP call and line iteration are offloaded to a thread via
+        ``asyncio.to_thread`` so the caller's event loop is not blocked.
+        For full async streaming consider migrating to ``httpx.AsyncClient``.
         """
+        import asyncio
+
         doc_id = doc_ids if doc_ids else self._get_all_doc_ids(collection)
-        resp = requests.post(
-            f"{API_BASE}/chat/completions/",
-            headers=self._headers,
-            json={
-                "messages": [{"role": "user", "content": question}],
-                "doc_id": doc_id,
-                "stream": True,
-                "stream_metadata": True,
-            },
-            stream=True,
-            timeout=120,
-        )
-        if resp.status_code != 200:
-            raise CloudAPIError(f"Cloud streaming error {resp.status_code}: {resp.text}")
 
-        current_tool_name = None
-        current_tool_args = []
+        headers = self._headers
 
-        for line in resp.iter_lines(decode_unicode=True):
-            if not line or not line.startswith("data: "):
-                continue
-            data_str = line[6:]
-            if data_str.strip() == "[DONE]":
-                break
+        def _stream() -> list[tuple[str, object]]:
+            """Execute the blocking SSE request in a worker thread."""
+            resp = requests.post(
+                f"{API_BASE}/chat/completions/",
+                headers=headers,
+                json={
+                    "messages": [{"role": "user", "content": question}],
+                    "doc_id": doc_id,
+                    "stream": True,
+                    "stream_metadata": True,
+                },
+                stream=True,
+                timeout=120,
+            )
             try:
-                chunk = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
+                if resp.status_code != 200:
+                    body = resp.text[:500] if resp.text else ""
+                    raise CloudAPIError(
+                        f"Cloud streaming error {resp.status_code}: {body}"
+                    )
 
-            meta = chunk.get("block_metadata", {})
-            block_type = meta.get("type", "")
-            choices = chunk.get("choices", [])
-            delta = choices[0].get("delta", {}) if choices else {}
-            content = delta.get("content", "")
-
-            if block_type == "mcp_tool_use_start":
-                current_tool_name = meta.get("tool_name", "")
-                current_tool_args = []
-
-            elif block_type == "tool_use":
-                if content:
-                    current_tool_args.append(content)
-
-            elif block_type == "tool_use_stop":
-                # Skip internal tools (ToolSearch, Read, Grep, etc.)
-                _INTERNAL_TOOLS = {"ToolSearch", "Read", "Grep", "Glob", "Bash", "Edit", "Write"}
-                if current_tool_name and current_tool_name not in _INTERNAL_TOOLS:
-                    args_str = "".join(current_tool_args)
-                    yield QueryEvent(type="tool_call", data={
-                        "name": current_tool_name,
-                        "args": args_str,
-                    })
+                events: list[tuple[str, object]] = []
                 current_tool_name = None
-                current_tool_args = []
+                current_tool_args: list[str] = []
 
-            elif block_type == "text" and content:
-                yield QueryEvent(type="answer_delta", data=content)
+                for line in resp.iter_lines(decode_unicode=True):
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str.strip() == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
 
-        yield QueryEvent(type="answer_done", data="")
+                    meta = chunk.get("block_metadata", {})
+                    block_type = meta.get("type", "")
+                    choices = chunk.get("choices", [])
+                    delta = choices[0].get("delta", {}) if choices else {}
+                    content = delta.get("content", "")
+
+                    if block_type == "mcp_tool_use_start":
+                        current_tool_name = meta.get("tool_name", "")
+                        current_tool_args = []
+
+                    elif block_type == "tool_use":
+                        if content:
+                            current_tool_args.append(content)
+
+                    elif block_type == "tool_use_stop":
+                        # Skip internal tools (ToolSearch, Read, Grep, etc.)
+                        if current_tool_name and current_tool_name not in _INTERNAL_TOOLS:
+                            args_str = "".join(current_tool_args)
+                            events.append(("tool_call", {
+                                "name": current_tool_name,
+                                "args": args_str,
+                            }))
+                        current_tool_name = None
+                        current_tool_args = []
+
+                    elif block_type == "text" and content:
+                        events.append(("answer_delta", content))
+
+                events.append(("answer_done", ""))
+                return events
+            finally:
+                resp.close()
+
+        events = await asyncio.to_thread(_stream)
+        for event_type, event_data in events:
+            yield QueryEvent(type=event_type, data=event_data)
 
     def _get_all_doc_ids(self, collection: str) -> list[str]:
         """Get all document IDs in a collection."""

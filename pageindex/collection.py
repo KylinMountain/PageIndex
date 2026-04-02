@@ -5,7 +5,7 @@ from .events import QueryEvent
 from .backend.protocol import Backend
 
 
-class _BackendQueryStream:
+class QueryStream:
     """Wraps backend.query_stream() as an async iterable object."""
 
     def __init__(self, backend: Backend, collection: str, question: str,
@@ -47,7 +47,7 @@ class Collection:
         self._backend.delete_document(self._name, doc_id)
 
     def query(self, question: str, doc_ids: list[str] | None = None,
-              stream: bool = False) -> str | _BackendQueryStream:
+              stream: bool = False) -> str | QueryStream:
         """Query documents in this collection.
 
         - stream=False: returns answer string (sync)
@@ -59,5 +59,5 @@ class Collection:
                 ...
         """
         if stream:
-            return _BackendQueryStream(self._backend, self._name, question, doc_ids)
+            return QueryStream(self._backend, self._name, question, doc_ids)
         return self._backend.query(self._name, question, doc_ids)

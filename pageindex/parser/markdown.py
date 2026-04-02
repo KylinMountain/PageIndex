@@ -1,7 +1,7 @@
 import re
-import litellm
 from pathlib import Path
 from .protocol import ContentNode, ParsedDocument
+from ..index.utils import count_tokens
 
 
 class MarkdownParser:
@@ -48,7 +48,7 @@ class MarkdownParser:
             start = header["line_num"] - 1
             end = headers[i + 1]["line_num"] - 1 if i + 1 < len(headers) else len(lines)
             text = "\n".join(lines[start:end]).strip()
-            tokens = litellm.token_counter(model=model, text=text) if text else 0
+            tokens = count_tokens(text, model=model)
             nodes.append(ContentNode(
                 content=text,
                 tokens=tokens,

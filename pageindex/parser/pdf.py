@@ -1,7 +1,7 @@
 import pymupdf
-import litellm
 from pathlib import Path
 from .protocol import ContentNode, ParsedDocument
+from ..index.utils import count_tokens
 
 
 class PdfParser:
@@ -16,7 +16,7 @@ class PdfParser:
         with pymupdf.open(str(path)) as doc:
             for i, page in enumerate(doc):
                 text = page.get_text()
-                tokens = litellm.token_counter(model=model, text=text) if text else 0
+                tokens = count_tokens(text, model=model)
                 nodes.append(ContentNode(
                     content=text or "",
                     tokens=tokens,

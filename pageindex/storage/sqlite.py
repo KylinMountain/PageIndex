@@ -101,14 +101,14 @@ class SQLiteStorage:
         return {"doc_id": row[0], "doc_name": row[1], "doc_description": row[2],
                 "file_path": row[3], "doc_type": row[4]}
 
-    def get_document_structure(self, collection: str, doc_id: str) -> dict:
+    def get_document_structure(self, collection: str, doc_id: str) -> list:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT structure FROM documents WHERE doc_id = ? AND collection_name = ?",
             (doc_id, collection),
         ).fetchone()
         if not row:
-            return {}
+            return []
         return json.loads(row[0])
 
     def get_pages(self, collection: str, doc_id: str) -> list | None:

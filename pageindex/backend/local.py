@@ -128,7 +128,7 @@ class LocalBackend:
     def get_document(self, collection: str, doc_id: str) -> dict:
         return self._storage.get_document(collection, doc_id)
 
-    def get_document_structure(self, collection: str, doc_id: str) -> dict:
+    def get_document_structure(self, collection: str, doc_id: str) -> list:
         return self._storage.get_document_structure(collection, doc_id)
 
     def get_page_content(self, collection: str, doc_id: str, pages: str) -> list:

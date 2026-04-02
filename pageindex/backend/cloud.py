@@ -157,7 +157,7 @@ class CloudBackend:
             "status": resp.get("status", ""),
         }
 
-    def get_document_structure(self, collection: str, doc_id: str) -> dict:
+    def get_document_structure(self, collection: str, doc_id: str) -> list:
         resp = self._request("GET", f"/doc/{self._enc(doc_id)}/", params={"type": "tree", "summary": "true"})
         return resp.get("tree", resp.get("structure", []))
 
@@ -205,27 +205,20 @@ class CloudBackend:
                            doc_ids: list[str] | None = None) -> AsyncIterator[QueryEvent]:
         """Streaming query via cloud chat/completions SSE.
 
-        block_metadata.type values:
-        - text_block_start: start of text output block
-        - text: text content delta
-        - text_stop: end of text output block
-        - mcp_tool_use_start: tool call started (has tool_name, server_name)
-        - tool_use: tool call argument delta
-        - tool_use_stop: tool call ended
-
-        Note: Uses synchronous ``requests`` under the hood.  The blocking
-        HTTP call and line iteration are offloaded to a thread via
-        ``asyncio.to_thread`` so the caller's event loop is not blocked.
-        For full async streaming consider migrating to ``httpx.AsyncClient``.
+        Events are yielded in real-time as they arrive from the server.
+        A background thread handles the blocking HTTP stream and pushes
+        events through an asyncio.Queue for true async streaming.
         """
         import asyncio
+        import threading
 
         doc_id = doc_ids if doc_ids else self._get_all_doc_ids(collection)
-
         headers = self._headers
+        queue: asyncio.Queue[QueryEvent | None] = asyncio.Queue()
+        loop = asyncio.get_event_loop()
 
-        def _stream() -> list[tuple[str, object]]:
-            """Execute the blocking SSE request in a worker thread."""
+        def _stream():
+            """Background thread: read SSE and push events to queue."""
             resp = requests.post(
                 f"{API_BASE}/chat/completions/",
                 headers=headers,
@@ -241,11 +234,13 @@ class CloudBackend:
             try:
                 if resp.status_code != 200:
                     body = resp.text[:500] if resp.text else ""
-                    raise CloudAPIError(
-                        f"Cloud streaming error {resp.status_code}: {body}"
+                    loop.call_soon_threadsafe(
+                        queue.put_nowait,
+                        QueryEvent(type="answer_done",
+                                   data=f"Cloud streaming error {resp.status_code}: {body}"),
                     )
+                    return
 
-                events: list[tuple[str, object]] = []
                 current_tool_name = None
                 current_tool_args: list[str] = []
 
@@ -275,27 +270,38 @@ class CloudBackend:
                             current_tool_args.append(content)
 
                     elif block_type == "tool_use_stop":
-                        # Skip internal tools (ToolSearch, Read, Grep, etc.)
                         if current_tool_name and current_tool_name not in _INTERNAL_TOOLS:
                             args_str = "".join(current_tool_args)
-                            events.append(("tool_call", {
-                                "name": current_tool_name,
-                                "args": args_str,
-                            }))
+                            loop.call_soon_threadsafe(
+                                queue.put_nowait,
+                                QueryEvent(type="tool_call", data={
+                                    "name": current_tool_name,
+                                    "args": args_str,
+                                }),
+                            )
                         current_tool_name = None
                         current_tool_args = []
 
                     elif block_type == "text" and content:
-                        events.append(("answer_delta", content))
+                        loop.call_soon_threadsafe(
+                            queue.put_nowait,
+                            QueryEvent(type="answer_delta", data=content),
+                        )
 
-                events.append(("answer_done", ""))
-                return events
             finally:
                 resp.close()
+                loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
 
-        events = await asyncio.to_thread(_stream)
-        for event_type, event_data in events:
-            yield QueryEvent(type=event_type, data=event_data)
+        thread = threading.Thread(target=_stream, daemon=True)
+        thread.start()
+
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            yield event
+
+        thread.join(timeout=5)
 
     def _get_all_doc_ids(self, collection: str) -> list[str]:
         """Get all document IDs in a collection."""

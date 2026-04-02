@@ -6,6 +6,7 @@ API reference: https://github.com/VectifyAI/pageindex_sdk
 from __future__ import annotations
 import json
 import logging
+import os
 import re
 import time
 import urllib.parse
@@ -125,6 +126,14 @@ class CloudBackend:
     # ── Document management ───────────────────────────────────────────────
 
     def add_document(self, collection: str, file_path: str) -> str:
+        file_name = os.path.basename(file_path)
+
+        # Dedup: check if a document with the same name already exists
+        existing_docs = self.list_documents(collection)
+        for doc in existing_docs:
+            if doc.get("doc_name") == file_name:
+                return doc["doc_id"]
+
         folder_id = self._get_folder_id(collection)
         data = {"if_retrieval": "true"}
         if folder_id:

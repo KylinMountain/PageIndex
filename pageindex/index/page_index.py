@@ -1113,11 +1113,12 @@ def page_index_main(doc, opt=None):
 def page_index(doc, model=None, toc_check_page_num=None, max_page_num_each_node=None, max_token_num_each_node=None,
                if_add_node_id=None, if_add_node_summary=None, if_add_doc_description=None, if_add_node_text=None):
     
+    from ..config import IndexConfig
     user_opt = {
         arg: value for arg, value in locals().items()
         if arg != "doc" and value is not None
     }
-    opt = ConfigLoader().load(user_opt)
+    opt = IndexConfig(**user_opt)
     return page_index_main(doc, opt)
 
 

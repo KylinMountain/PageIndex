@@ -6,5 +6,8 @@ __pycache__
 logs/
 pageindex.egg-info/
 *.db
+examples/workspace/files/
+examples/documents/attention.pdf
+examples/documents/deepseek-r1.pdf
 venv/
 uv.lock

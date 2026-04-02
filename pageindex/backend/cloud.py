@@ -29,8 +29,18 @@ class CloudBackend:
         self._api_key = api_key
         self._headers = {"api_key": api_key}
         self._folder_id_cache: dict[str, str | None] = {}
+        self._folder_warning_shown = False
 
     # ── HTTP helpers ──────────────────────────────────────────────────────
+
+    def _warn_folder_upgrade(self) -> None:
+        if not self._folder_warning_shown:
+            logger.warning(
+                "Folders (collections) require a Max plan. "
+                "All documents are stored in a single global space — collection names are ignored. "
+                "Upgrade at https://dash.pageindex.ai/subscription"
+            )
+            self._folder_warning_shown = True
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
         url = f"{API_BASE}{path}"
@@ -72,9 +82,7 @@ class CloudBackend:
             self._folder_id_cache[name] = resp.get("folder", {}).get("id")
         except CloudAPIError as e:
             if "403" in str(e):
-                logger.warning(
-                    "Folders require a Max plan. Upgrade at https://dash.pageindex.ai/subscription"
-                )
+                self._warn_folder_upgrade()
                 self._folder_id_cache[name] = None
             else:
                 raise
@@ -91,10 +99,7 @@ class CloudBackend:
             self._folder_id_cache[name] = resp.get("folder", {}).get("id")
         except CloudAPIError as e:
             if "403" in str(e):
-                logger.warning(
-                    "Folders require a Max plan. Documents will be stored without folder organization. "
-                    "Upgrade at https://dash.pageindex.ai/subscription"
-                )
+                self._warn_folder_upgrade()
                 self._folder_id_cache[name] = None
             else:
                 raise
@@ -126,14 +131,6 @@ class CloudBackend:
     # ── Document management ───────────────────────────────────────────────
 
     def add_document(self, collection: str, file_path: str) -> str:
-        file_name = os.path.basename(file_path)
-
-        # Dedup: check if a document with the same name already exists
-        existing_docs = self.list_documents(collection)
-        for doc in existing_docs:
-            if doc.get("doc_name") == file_name:
-                return doc["doc_id"]
-
         folder_id = self._get_folder_id(collection)
         data = {"if_retrieval": "true"}
         if folder_id:

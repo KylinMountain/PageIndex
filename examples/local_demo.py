@@ -9,7 +9,9 @@ Steps:
   1 — Download and index a PDF
   2 — Stream a question with tool call visibility
 
-Requirements: pip install pageindex openai-agents
+Requirements:
+    pip install pageindex
+    export OPENAI_API_KEY=your-api-key   # or any LiteLLM-supported provider
 """
 import asyncio
 from pathlib import Path
@@ -20,6 +22,7 @@ _EXAMPLES_DIR = Path(__file__).parent
 PDF_URL = "https://arxiv.org/pdf/1706.03762.pdf"
 PDF_PATH = _EXAMPLES_DIR / "documents" / "attention.pdf"
 WORKSPACE = _EXAMPLES_DIR / "workspace"
+MODEL = "gpt-4o-2024-11-20"  # any LiteLLM-supported model
 
 # Download PDF if needed
 if not PDF_PATH.exists():
@@ -33,7 +36,7 @@ if not PDF_PATH.exists():
                     f.write(chunk)
     print("Download complete.\n")
 
-client = LocalClient(storage_path=str(WORKSPACE))
+client = LocalClient(model=MODEL, storage_path=str(WORKSPACE))
 col = client.collection()
 
 doc_id = col.add(str(PDF_PATH))

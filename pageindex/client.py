@@ -41,32 +41,6 @@ class PageIndexClient:
         from .backend.cloud import CloudBackend
         self._backend = CloudBackend(api_key=api_key)
 
-    @staticmethod
-    def _check_llm_api_key(model: str) -> None:
-        """Verify that the LLM provider's API key is configured."""
-        import os
-        try:
-            import litellm
-            _, provider, _, _ = litellm.get_llm_provider(model=model)
-        except Exception:
-            return  # Can't resolve provider — let litellm fail later with details
-
-        provider_env = {
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "azure": "AZURE_API_KEY",
-            "cohere": "COHERE_API_KEY",
-            "replicate": "REPLICATE_API_KEY",
-            "huggingface": "HUGGINGFACE_API_KEY",
-        }
-        env_var = provider_env.get(provider)
-        if env_var and not os.getenv(env_var):
-            from .errors import PageIndexError
-            raise PageIndexError(
-                f"API key not found. Set the {env_var} environment variable "
-                f"for provider '{provider}' (model: {model})."
-            )
-
     def _init_local(self, model: str = None, retrieve_model: str = None,
                     storage_path: str = None, storage=None,
                     index_config: IndexConfig | dict = None):
@@ -84,8 +58,7 @@ class PageIndexClient:
         else:
             opt = IndexConfig(**overrides) if overrides else IndexConfig()
 
-        # Early validation: check API key before any expensive operations
-        self._check_llm_api_key(opt.model)
+        self._validate_llm_provider(opt.model)
 
         storage_path = Path(storage_path or "~/.pageindex").expanduser()
         storage_path.mkdir(parents=True, exist_ok=True)
@@ -148,6 +121,30 @@ class LocalClient(PageIndexClient):
                  storage_path: str = None, storage=None,
                  index_config: IndexConfig | dict = None):
         self._init_local(model, retrieve_model, storage_path, storage, index_config)
+
+    @staticmethod
+    def _validate_llm_provider(model: str) -> None:
+        """Validate model and check API key via litellm. Warns if key seems missing."""
+        import logging
+        try:
+            import litellm
+            litellm.model_cost_map_url = ""
+            _, provider, _, _ = litellm.get_llm_provider(model=model)
+        except Exception:
+            return
+
+        # Ask litellm if it can find a key for this provider
+        key = litellm.get_api_key(llm_provider=provider, dynamic_api_key=None)
+        if not key:
+            # litellm didn't find it — try common env var pattern as fallback
+            import os
+            common_var = f"{provider.upper()}_API_KEY"
+            if not os.getenv(common_var):
+                from .errors import PageIndexError
+                raise PageIndexError(
+                    f"API key not configured for provider '{provider}' (model: {model}). "
+                    f"Set the {common_var} environment variable."
+                )
 
 
 class CloudClient(PageIndexClient):

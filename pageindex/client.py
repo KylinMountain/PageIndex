@@ -19,6 +19,16 @@ def _normalize_retrieve_model(model: str) -> str:
 class PageIndexClient:
     """PageIndex client — supports both local and cloud modes.
 
+    Args:
+        api_key: PageIndex cloud API key. When provided, cloud mode is used
+            and local-only params (model, storage_path, index_config, …) are ignored.
+        model: LLM model for indexing (local mode only, default: gpt-4o-2024-11-20).
+        retrieve_model: LLM model for agent QA (local mode only, default: same as model).
+        storage_path: Directory for SQLite DB and files (local mode only, default: ./.pageindex).
+        storage: Custom StorageEngine instance (local mode only).
+        index_config: Advanced indexing parameters (local mode only, optional).
+            Pass an IndexConfig instance or a dict. Defaults are sensible for most use cases.
+
     Usage:
         # Local mode (auto-detected when no api_key)
         client = PageIndexClient(model="gpt-5.4")
@@ -60,7 +70,7 @@ class PageIndexClient:
 
         self._validate_llm_provider(opt.model)
 
-        storage_path = Path(storage_path or "~/.pageindex").expanduser()
+        storage_path = Path(storage_path or ".pageindex").resolve()
         storage_path.mkdir(parents=True, exist_ok=True)
 
         from .storage.sqlite import SQLiteStorage
@@ -99,7 +109,7 @@ class LocalClient(PageIndexClient):
     Args:
         model: LLM model for indexing (default: gpt-4o-2024-11-20)
         retrieve_model: LLM model for agent QA (default: same as model)
-        storage_path: Directory for SQLite DB and files (default: ~/.pageindex)
+        storage_path: Directory for SQLite DB and files (default: ./.pageindex)
         storage: Custom StorageEngine instance (default: SQLiteStorage)
         index_config: Advanced indexing parameters. Pass an IndexConfig instance
             or a dict. All fields have sensible defaults — most users don't need this.

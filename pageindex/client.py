@@ -31,11 +31,11 @@ class PageIndexClient:
 
     def __init__(self, api_key: str = None, model: str = None,
                  retrieve_model: str = None, storage_path: str = None,
-                 storage=None):
+                 storage=None, index_config: IndexConfig | dict = None):
         if api_key:
             self._init_cloud(api_key)
         else:
-            self._init_local(model, retrieve_model, storage_path, storage)
+            self._init_local(model, retrieve_model, storage_path, storage, index_config)
 
     def _init_cloud(self, api_key: str):
         from .backend.cloud import CloudBackend

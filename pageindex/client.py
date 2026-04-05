@@ -84,6 +84,27 @@ class PageIndexClient:
             index_config=opt,
         )
 
+    @staticmethod
+    def _validate_llm_provider(model: str) -> None:
+        """Validate model and check API key via litellm. Warns if key seems missing."""
+        try:
+            import litellm
+            litellm.model_cost_map_url = ""
+            _, provider, _, _ = litellm.get_llm_provider(model=model)
+        except Exception:
+            return
+
+        key = litellm.get_api_key(llm_provider=provider, dynamic_api_key=None)
+        if not key:
+            import os
+            common_var = f"{provider.upper()}_API_KEY"
+            if not os.getenv(common_var):
+                from .errors import PageIndexError
+                raise PageIndexError(
+                    f"API key not configured for provider '{provider}' (model: {model}). "
+                    f"Set the {common_var} environment variable."
+                )
+
     def collection(self, name: str = "default") -> Collection:
         """Get or create a collection. Defaults to 'default'."""
         self._backend.get_or_create_collection(name)
@@ -131,30 +152,6 @@ class LocalClient(PageIndexClient):
                  storage_path: str = None, storage=None,
                  index_config: IndexConfig | dict = None):
         self._init_local(model, retrieve_model, storage_path, storage, index_config)
-
-    @staticmethod
-    def _validate_llm_provider(model: str) -> None:
-        """Validate model and check API key via litellm. Warns if key seems missing."""
-        import logging
-        try:
-            import litellm
-            litellm.model_cost_map_url = ""
-            _, provider, _, _ = litellm.get_llm_provider(model=model)
-        except Exception:
-            return
-
-        # Ask litellm if it can find a key for this provider
-        key = litellm.get_api_key(llm_provider=provider, dynamic_api_key=None)
-        if not key:
-            # litellm didn't find it — try common env var pattern as fallback
-            import os
-            common_var = f"{provider.upper()}_API_KEY"
-            if not os.getenv(common_var):
-                from .errors import PageIndexError
-                raise PageIndexError(
-                    f"API key not configured for provider '{provider}' (model: {model}). "
-                    f"Set the {common_var} environment variable."
-                )
 
 
 class CloudClient(PageIndexClient):

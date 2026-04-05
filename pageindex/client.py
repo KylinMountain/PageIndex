@@ -25,6 +25,39 @@ def _normalize_retrieve_model(model: str) -> str:
     return f"litellm/{model}"
 
 
+import re
+
+_IMG_PLACEHOLDER_RE = re.compile(r'(!\[image\])\((page_\d+_img_\d+)\)')
+
+
+def _replace_image_placeholders(structure, placeholder_to_path):
+    """Replace image placeholders in node 'text' fields with real paths."""
+    if isinstance(structure, list):
+        for node in structure:
+            _replace_image_placeholders(node, placeholder_to_path)
+    elif isinstance(structure, dict):
+        if 'text' in structure and structure['text']:
+            def _repl(m):
+                key = m.group(2)
+                real_path = placeholder_to_path.get(key, key)
+                return f"{m.group(1)}({real_path})"
+            structure['text'] = _IMG_PLACEHOLDER_RE.sub(_repl, structure['text'])
+        if 'nodes' in structure:
+            _replace_image_placeholders(structure['nodes'], placeholder_to_path)
+
+
+def _replace_image_placeholders_in_pages(pages, placeholder_to_path):
+    """Replace image placeholders in cached page content."""
+    for page_entry in pages:
+        content = page_entry.get('content', '')
+        if '![image](' in content:
+            def _repl(m):
+                key = m.group(2)
+                real_path = placeholder_to_path.get(key, key)
+                return f"{m.group(1)}({real_path})"
+            page_entry['content'] = _IMG_PLACEHOLDER_RE.sub(_repl, content)
+
+
 def _attach_images_to_structure(structure, page_image_paths):
     """
     Walk the structure tree and attach image paths to nodes based on their
@@ -104,16 +137,11 @@ class PageIndexClient:
                 if_add_doc_description='yes',
                 if_extract_images=self.if_extract_images,
             )
-            # Extract per-page text so queries don't need the original PDF
-            pages = []
-            with open(file_path, 'rb') as f:
-                pdf_reader = PyPDF2.PdfReader(f)
-                for i, page in enumerate(pdf_reader.pages, 1):
-                    pages.append({'page': i, 'content': page.extract_text() or ''})
-
             # Save extracted images to disk and associate with structure
             image_count = 0
             page_images = result.get('page_images', {})
+            # placeholder -> real path mapping for text replacement
+            placeholder_to_path = {}
             if page_images and self.workspace:
                 image_dir = self.workspace / "images" / doc_id
                 image_dir.mkdir(parents=True, exist_ok=True)
@@ -123,26 +151,44 @@ class PageIndexClient:
                 page_image_paths = {}
                 for page_num, img_list in sorted(page_images.items()):
                     paths = []
-                    for img_bytes in img_list:
+                    for local_idx, img_bytes in enumerate(img_list):
                         obj_id = id(img_bytes)
                         if obj_id in content_to_path:
-                            # Same xref object, reuse the already-written file
-                            paths.append(content_to_path[obj_id])
+                            rel_path = content_to_path[obj_id]
                         else:
                             rel_path = f"images/{doc_id}/img_{global_img_idx}.png"
                             abs_path = self.workspace / rel_path
                             with open(abs_path, 'wb') as img_f:
                                 img_f.write(img_bytes)
                             content_to_path[obj_id] = rel_path
-                            paths.append(rel_path)
                             image_count += 1
                             global_img_idx += 1
+                        paths.append(rel_path)
+                        placeholder_to_path[f"page_{page_num}_img_{local_idx}"] = rel_path
                     page_image_paths[page_num] = paths
                 # Associate images with structure tree nodes
                 _attach_images_to_structure(result['structure'], page_image_paths)
             elif page_images:
-                # No workspace: just count images, paths not saved
                 image_count = sum(len(imgs) for imgs in page_images.values())
+
+            # Build per-page text cache.
+            # If images were extracted, page_list contains text with markdown
+            # image placeholders; otherwise fall back to plain PyPDF2 text.
+            page_list_with_imgs = result.get('page_list')
+            pages = []
+            if page_list_with_imgs:
+                for i, (page_text, _tokens) in enumerate(page_list_with_imgs, 1):
+                    pages.append({'page': i, 'content': page_text or ''})
+            else:
+                with open(file_path, 'rb') as f:
+                    pdf_reader = PyPDF2.PdfReader(f)
+                    for i, page in enumerate(pdf_reader.pages, 1):
+                        pages.append({'page': i, 'content': page.extract_text() or ''})
+
+            # Replace image placeholders with real paths in pages and structure
+            if placeholder_to_path:
+                _replace_image_placeholders_in_pages(pages, placeholder_to_path)
+                _replace_image_placeholders(result['structure'], placeholder_to_path)
 
             self.documents[doc_id] = {
                 'id': doc_id,

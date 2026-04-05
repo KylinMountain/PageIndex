@@ -1080,10 +1080,18 @@ def page_index_main(doc, opt=None):
     page_images = {}
     if getattr(opt, 'if_extract_images', False):
         print('Extracting images from PDF...')
-        page_images = extract_pdf_images(doc)
+        page_images, page_texts_with_images = extract_pdf_images(doc)
         total_images = sum(len(imgs) for imgs in page_images.values())
         print(f'Found {total_images} images across {len(page_images)} pages.')
         logger.info({'total_images': total_images, 'pages_with_images': len(page_images)})
+        # Replace page text with pymupdf dict-mode text that has inline
+        # image placeholders at correct positions
+        if page_texts_with_images:
+            page_list = list(page_list)  # make mutable
+            for pg, text_with_imgs in page_texts_with_images.items():
+                if 1 <= pg <= len(page_list):
+                    token_length = count_tokens(text_with_imgs, model=opt.model)
+                    page_list[pg - 1] = (text_with_imgs, token_length)
 
     logger.info({'total_page_number': len(page_list)})
     logger.info({'total_token': sum([page[1] for page in page_list])})
@@ -1112,6 +1120,7 @@ def page_index_main(doc, opt=None):
                 }
                 if page_images:
                     result['page_images'] = page_images
+                    result['page_list'] = page_list
                 return result
         structure = format_structure(structure, order=['title', 'node_id', 'start_index', 'end_index', 'summary', 'text', 'nodes'])
         result = {
@@ -1120,6 +1129,7 @@ def page_index_main(doc, opt=None):
         }
         if page_images:
             result['page_images'] = page_images
+            result['page_list'] = page_list
         return result
 
     return asyncio.run(page_index_builder())

@@ -414,15 +414,18 @@ def get_page_tokens(pdf_path, model=None, pdf_parser="PyPDF2"):
 
 def extract_pdf_images(doc_path):
     """
-    Extract embedded images from a PDF, one list of PNG bytes per page.
+    Extract embedded images from a PDF and generate per-page text with
+    inline markdown image placeholders at the correct positions.
 
-    De-duplicates by xref for *storage* (each unique image is converted only
-    once), but every page that references an xref still gets the image in its
-    list so that downstream page-to-node association is correct.
+    Uses pymupdf's dict-mode blocks to interleave text and image references
+    in document order.  Image bytes are de-duplicated by xref (converted
+    once, referenced everywhere).
 
     Returns:
-        dict[int, list[bytes]]: mapping from 1-indexed page number to list of PNG bytes.
-        CMYK images are converted to RGB.
+        tuple[dict[int, list[bytes]], dict[int, str]]:
+            page_images: {page_num: [png_bytes, ...]}
+            page_texts:  {page_num: "text with ![image](page_N_img_M) ..."}
+            Both dicts are 1-indexed by page number.
     """
     if isinstance(doc_path, BytesIO):
         doc_path.seek(0)
@@ -430,47 +433,77 @@ def extract_pdf_images(doc_path):
     else:
         doc = pymupdf.open(doc_path)
 
-    xref_cache = {}  # xref -> PNG bytes (de-dup conversion)
+    xref_cache = {}   # xref -> PNG bytes (de-dup conversion)
     page_images = {}
+    page_texts = {}
 
     for page_idx, page in enumerate(doc):
         page_num = page_idx + 1
         images = []
-        seen_on_page = set()  # avoid duplicates within the same page
+        img_idx = 0
+
+        # Build xref -> list index for this page from get_images()
+        page_xrefs = []
+        seen_on_page = set()
         for img_info in page.get_images(full=True):
             xref = img_info[0]
             if xref in seen_on_page:
                 continue
             seen_on_page.add(xref)
+            page_xrefs.append(xref)
 
-            if xref in xref_cache:
-                images.append(xref_cache[xref])
-                continue
-
-            try:
-                base_image = doc.extract_image(xref)
-                if not base_image or not base_image.get("image"):
+        # Pre-extract all image bytes for this page
+        xref_to_local_idx = {}
+        for xref in page_xrefs:
+            local_idx = len(images)
+            if xref not in xref_cache:
+                try:
+                    base_image = doc.extract_image(xref)
+                    if not base_image or not base_image.get("image"):
+                        continue
+                    img = Image.open(BytesIO(base_image["image"]))
+                    if img.mode == "CMYK":
+                        img = img.convert("RGB")
+                    elif img.mode not in ("RGB", "RGBA", "L"):
+                        img = img.convert("RGB")
+                    png_buf = BytesIO()
+                    img.save(png_buf, format="PNG")
+                    xref_cache[xref] = png_buf.getvalue()
+                except Exception as e:
+                    logging.warning(f"Failed to extract image xref={xref} on page {page_num}: {e}")
                     continue
+            images.append(xref_cache[xref])
+            xref_to_local_idx[xref] = local_idx
 
-                img = Image.open(BytesIO(base_image["image"]))
-                if img.mode == "CMYK":
-                    img = img.convert("RGB")
-                elif img.mode not in ("RGB", "RGBA", "L"):
-                    img = img.convert("RGB")
+        # Walk blocks in document order, interleave text and image refs
+        parts = []
+        blocks = page.get_text("dict")["blocks"]
+        for block in blocks:
+            if block.get("type") == 1:  # image block
+                xref = block.get("xref")
+                if xref and xref in xref_to_local_idx:
+                    idx = xref_to_local_idx[xref]
+                    parts.append(f"\n![image](page_{page_num}_img_{idx})\n")
+                elif xref_to_local_idx:
+                    # Fallback: image block without matching xref, use next index
+                    idx = img_idx
+                    if idx < len(images):
+                        parts.append(f"\n![image](page_{page_num}_img_{idx})\n")
+                        img_idx += 1
+            else:  # text block
+                for line in block.get("lines", []):
+                    spans_text = "".join(span.get("text", "") for span in line.get("spans", []))
+                    if spans_text.strip():
+                        parts.append(spans_text)
+                parts.append("\n")
 
-                png_buf = BytesIO()
-                img.save(png_buf, format="PNG")
-                png_bytes = png_buf.getvalue()
-                xref_cache[xref] = png_bytes
-                images.append(png_bytes)
-            except Exception as e:
-                logging.warning(f"Failed to extract image xref={xref} on page {page_num}: {e}")
-
+        page_text = "".join(parts).strip()
+        page_texts[page_num] = page_text
         if images:
             page_images[page_num] = images
 
     doc.close()
-    return page_images
+    return page_images, page_texts
 
 
 def get_text_of_pdf_pages(pdf_pages, start_page, end_page):

@@ -153,15 +153,17 @@ class CloudBackend:
 
         raise CloudAPIError(f"Document {doc_id} indexing timed out")
 
-    def get_document(self, collection: str, doc_id: str) -> dict:
+    def get_document(self, collection: str, doc_id: str, include_text: bool = False) -> dict:
         resp = self._request("GET", f"/doc/{self._enc(doc_id)}/metadata/")
-        return {
+        doc = {
             "doc_id": resp.get("id", doc_id),
             "doc_name": resp.get("name", ""),
             "doc_description": resp.get("description", ""),
             "doc_type": "pdf",
             "status": resp.get("status", ""),
         }
+        doc["structure"] = self.get_document_structure(collection, doc_id)
+        return doc
 
     def get_document_structure(self, collection: str, doc_id: str) -> list:
         resp = self._request("GET", f"/doc/{self._enc(doc_id)}/", params={"type": "tree", "summary": "true"})

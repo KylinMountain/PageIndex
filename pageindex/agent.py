@@ -13,6 +13,9 @@ TOOL USE:
 - Call get_document_structure(doc_id) to identify relevant page ranges.
 - Call get_page_content(doc_id, pages="5-7") with tight ranges; never fetch the whole document.
 - Before each tool call, output one short sentence explaining the reason.
+IMAGES:
+- Page content may contain image references like ![image](path). Always preserve these in your answer so the downstream UI can render them.
+- Place images near the relevant context in your answer.
 Answer based only on tool output. Be concise.
 """
 

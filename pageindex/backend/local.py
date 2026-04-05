@@ -95,11 +95,14 @@ class LocalBackend:
         shutil.copy2(file_path, managed_path)
 
         try:
-            parsed = parser.parse(file_path, model=self._model)
+            # Store images alongside the document: files/{collection}/{doc_id}/images/
+            images_dir = str(col_dir / doc_id / "images")
+            parsed = parser.parse(file_path, model=self._model, images_dir=images_dir)
             result = build_index(parsed, model=self._model, opt=self._index_config)
 
             # Cache page text for fast retrieval (avoids re-reading files)
-            pages = [{"page": n.index, "content": n.content}
+            pages = [{"page": n.index, "content": n.content,
+                      **({"images": n.images} if n.images else {})}
                      for n in parsed.nodes if n.content]
 
             # Strip text from structure to save storage space (PDF only;
@@ -121,12 +124,43 @@ class LocalBackend:
             })
         except Exception as e:
             managed_path.unlink(missing_ok=True)
+            doc_dir = col_dir / doc_id
+            if doc_dir.exists():
+                shutil.rmtree(doc_dir)
             raise IndexingError(f"Failed to index {file_path}: {e}") from e
 
         return doc_id
 
-    def get_document(self, collection: str, doc_id: str) -> dict:
-        return self._storage.get_document(collection, doc_id)
+    def get_document(self, collection: str, doc_id: str, include_text: bool = False) -> dict:
+        """Get document metadata with structure.
+
+        Args:
+            include_text: If True, populate each structure node's 'text' field
+                from cached page content. WARNING: may be very large — do NOT
+                use in agent/LLM contexts as it can exhaust the context window.
+        """
+        doc = self._storage.get_document(collection, doc_id)
+        if not doc:
+            return {}
+        doc["structure"] = self._storage.get_document_structure(collection, doc_id)
+        if include_text:
+            pages = self._storage.get_pages(collection, doc_id) or []
+            page_map = {p["page"]: p["content"] for p in pages}
+            self._fill_node_text(doc["structure"], page_map)
+        return doc
+
+    @staticmethod
+    def _fill_node_text(nodes: list, page_map: dict) -> None:
+        """Recursively fill 'text' on structure nodes from cached page content."""
+        for node in nodes:
+            start = node.get("start_index")
+            end = node.get("end_index")
+            if start is not None and end is not None:
+                node["text"] = "\n".join(
+                    page_map.get(p, "") for p in range(start, end + 1)
+                )
+            if "nodes" in node:
+                LocalBackend._fill_node_text(node["nodes"], page_map)
 
     def get_document_structure(self, collection: str, doc_id: str) -> list:
         return self._storage.get_document_structure(collection, doc_id)
@@ -156,6 +190,10 @@ class LocalBackend:
         doc = self._storage.get_document(collection, doc_id)
         if doc and doc.get("file_path"):
             Path(doc["file_path"]).unlink(missing_ok=True)
+        # Clean up images directory: files/{collection}/{doc_id}/
+        doc_dir = self._files_dir / collection / doc_id
+        if doc_dir.exists():
+            shutil.rmtree(doc_dir)
         self._storage.delete_document(collection, doc_id)
 
     def get_agent_tools(self, collection: str, doc_ids: list[str] | None = None) -> AgentTools:

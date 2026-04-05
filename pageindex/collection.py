@@ -40,8 +40,8 @@ class Collection:
     def list_documents(self) -> list[dict]:
         return self._backend.list_documents(self._name)
 
-    def get_document(self, doc_id: str) -> dict:
-        return self._backend.get_document(self._name, doc_id)
+    def get_document(self, doc_id: str, include_text: bool = False) -> dict:
+        return self._backend.get_document(self._name, doc_id, include_text=include_text)
 
     def get_document_structure(self, doc_id: str) -> list:
         return self._backend.get_document_structure(self._name, doc_id)

@@ -1065,9 +1065,9 @@ async def tree_parser(page_list, opt, doc=None, logger=None):
 
 def page_index_main(doc, opt=None):
     logger = JsonLogger(doc)
-    
+
     is_valid_pdf = (
-        (isinstance(doc, str) and os.path.isfile(doc) and doc.lower().endswith(".pdf")) or 
+        (isinstance(doc, str) and os.path.isfile(doc) and doc.lower().endswith(".pdf")) or
         isinstance(doc, BytesIO)
     )
     if not is_valid_pdf:
@@ -1076,13 +1076,22 @@ def page_index_main(doc, opt=None):
     print('Parsing PDF...')
     page_list = get_page_tokens(doc, model=opt.model)
 
+    # Extract images if enabled
+    page_images = {}
+    if getattr(opt, 'if_extract_images', False):
+        print('Extracting images from PDF...')
+        page_images = extract_pdf_images(doc)
+        total_images = sum(len(imgs) for imgs in page_images.values())
+        print(f'Found {total_images} images across {len(page_images)} pages.')
+        logger.info({'total_images': total_images, 'pages_with_images': len(page_images)})
+
     logger.info({'total_page_number': len(page_list)})
     logger.info({'total_token': sum([page[1] for page in page_list])})
 
     async def page_index_builder():
         structure = await tree_parser(page_list, opt, doc=doc, logger=logger)
         if opt.if_add_node_id == 'yes':
-            write_node_id(structure)    
+            write_node_id(structure)
         if opt.if_add_node_text == 'yes':
             add_node_text(structure, page_list)
         if opt.if_add_node_summary == 'yes':
@@ -1096,23 +1105,30 @@ def page_index_main(doc, opt=None):
                 clean_structure = create_clean_structure_for_description(structure)
                 doc_description = generate_doc_description(clean_structure, model=opt.model)
                 structure = format_structure(structure, order=['title', 'node_id', 'start_index', 'end_index', 'summary', 'text', 'nodes'])
-                return {
+                result = {
                     'doc_name': get_pdf_name(doc),
                     'doc_description': doc_description,
                     'structure': structure,
                 }
+                if page_images:
+                    result['page_images'] = page_images
+                return result
         structure = format_structure(structure, order=['title', 'node_id', 'start_index', 'end_index', 'summary', 'text', 'nodes'])
-        return {
+        result = {
             'doc_name': get_pdf_name(doc),
             'structure': structure,
         }
+        if page_images:
+            result['page_images'] = page_images
+        return result
 
     return asyncio.run(page_index_builder())
 
 
 def page_index(doc, model=None, toc_check_page_num=None, max_page_num_each_node=None, max_token_num_each_node=None,
-               if_add_node_id=None, if_add_node_summary=None, if_add_doc_description=None, if_add_node_text=None):
-    
+               if_add_node_id=None, if_add_node_summary=None, if_add_doc_description=None, if_add_node_text=None,
+               if_extract_images=None):
+
     user_opt = {
         arg: value for arg, value in locals().items()
         if arg != "doc" and value is not None

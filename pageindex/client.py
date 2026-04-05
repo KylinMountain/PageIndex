@@ -10,7 +10,7 @@ import PyPDF2
 from .page_index import page_index
 from .page_index_md import md_to_tree
 from .retrieve import get_document, get_document_structure, get_page_content
-from .utils import ConfigLoader, remove_fields
+from .utils import ConfigLoader, remove_fields, extract_pdf_images
 
 META_INDEX = "_meta.json"
 
@@ -23,6 +23,32 @@ def _normalize_retrieve_model(model: str) -> str:
     if model.startswith(passthrough_prefixes):
         return model
     return f"litellm/{model}"
+
+
+def _attach_images_to_structure(structure, page_image_paths):
+    """
+    Walk the structure tree and attach image paths to nodes based on their
+    start_index / end_index page range.
+
+    Args:
+        structure: list of node dicts (recursive via 'nodes' key)
+        page_image_paths: dict[int, list[str]] mapping page number to relative image paths
+    """
+    if isinstance(structure, list):
+        for node in structure:
+            _attach_images_to_structure(node, page_image_paths)
+    elif isinstance(structure, dict):
+        start = structure.get('start_index')
+        end = structure.get('end_index')
+        if start is not None and end is not None:
+            images = []
+            for page_num in range(start, end + 1):
+                if page_num in page_image_paths:
+                    images.extend(page_image_paths[page_num])
+            if images:
+                structure['images'] = images
+        if 'nodes' in structure:
+            _attach_images_to_structure(structure['nodes'], page_image_paths)
 
 
 class PageIndexClient:
@@ -46,6 +72,7 @@ class PageIndexClient:
         opt = ConfigLoader().load(overrides or None)
         self.model = opt.model
         self.retrieve_model = _normalize_retrieve_model(opt.retrieve_model or self.model)
+        self.if_extract_images = getattr(opt, 'if_extract_images', True)
         if self.workspace:
             self.workspace.mkdir(parents=True, exist_ok=True)
         self.documents = {}
@@ -74,7 +101,8 @@ class PageIndexClient:
                 if_add_node_summary='yes',
                 if_add_node_text='yes',
                 if_add_node_id='yes',
-                if_add_doc_description='yes'
+                if_add_doc_description='yes',
+                if_extract_images=self.if_extract_images,
             )
             # Extract per-page text so queries don't need the original PDF
             pages = []
@@ -83,6 +111,30 @@ class PageIndexClient:
                 for i, page in enumerate(pdf_reader.pages, 1):
                     pages.append({'page': i, 'content': page.extract_text() or ''})
 
+            # Save extracted images to disk and associate with structure
+            image_count = 0
+            page_images = result.get('page_images', {})
+            if page_images and self.workspace:
+                image_dir = self.workspace / "images" / doc_id
+                image_dir.mkdir(parents=True, exist_ok=True)
+                # Build mapping: page_num -> list of relative image paths
+                page_image_paths = {}
+                for page_num, img_list in page_images.items():
+                    paths = []
+                    for img_idx, img_bytes in enumerate(img_list):
+                        rel_path = f"images/{doc_id}/page_{page_num}_img_{img_idx}.png"
+                        abs_path = self.workspace / rel_path
+                        with open(abs_path, 'wb') as img_f:
+                            img_f.write(img_bytes)
+                        paths.append(rel_path)
+                        image_count += 1
+                    page_image_paths[page_num] = paths
+                # Associate images with structure tree nodes
+                _attach_images_to_structure(result['structure'], page_image_paths)
+            elif page_images:
+                # No workspace: just count images, paths not saved
+                image_count = sum(len(imgs) for imgs in page_images.values())
+
             self.documents[doc_id] = {
                 'id': doc_id,
                 'type': 'pdf',
@@ -90,6 +142,7 @@ class PageIndexClient:
                 'doc_name': result.get('doc_name', ''),
                 'doc_description': result.get('doc_description', ''),
                 'page_count': len(pages),
+                'image_count': image_count,
                 'structure': result['structure'],
                 'pages': pages,
             }
@@ -140,6 +193,8 @@ class PageIndexClient:
         }
         if doc.get('type') == 'pdf':
             entry['page_count'] = doc.get('page_count')
+            if doc.get('image_count'):
+                entry['image_count'] = doc['image_count']
         elif doc.get('type') == 'md':
             entry['line_count'] = doc.get('line_count')
         return entry
@@ -216,6 +271,8 @@ class PageIndexClient:
         doc['structure'] = full.get('structure', [])
         if full.get('pages'):
             doc['pages'] = full['pages']
+        if full.get('image_count') and not doc.get('image_count'):
+            doc['image_count'] = full['image_count']
 
     def get_document(self, doc_id: str) -> str:
         """Return document metadata JSON."""

@@ -10,6 +10,7 @@ import copy
 import asyncio
 import pymupdf
 from io import BytesIO
+from PIL import Image
 from dotenv import load_dotenv
 load_dotenv()
 import logging
@@ -410,6 +411,56 @@ def get_page_tokens(pdf_path, model=None, pdf_parser="PyPDF2"):
         raise ValueError(f"Unsupported PDF parser: {pdf_parser}")
 
         
+
+def extract_pdf_images(doc_path):
+    """
+    Extract embedded images from a PDF, one list of PNG bytes per page.
+
+    Returns:
+        dict[int, list[bytes]]: mapping from 1-indexed page number to list of PNG bytes.
+        Images are de-duplicated by xref across pages; CMYK images are converted to RGB.
+    """
+    if isinstance(doc_path, BytesIO):
+        doc_path.seek(0)
+        doc = pymupdf.open(stream=doc_path, filetype="pdf")
+    else:
+        doc = pymupdf.open(doc_path)
+
+    seen_xrefs = set()
+    page_images = {}
+
+    for page_idx, page in enumerate(doc):
+        page_num = page_idx + 1
+        images = []
+        for img_info in page.get_images(full=True):
+            xref = img_info[0]
+            if xref in seen_xrefs:
+                continue
+            seen_xrefs.add(xref)
+
+            try:
+                base_image = doc.extract_image(xref)
+                if not base_image or not base_image.get("image"):
+                    continue
+
+                img = Image.open(BytesIO(base_image["image"]))
+                if img.mode == "CMYK":
+                    img = img.convert("RGB")
+                elif img.mode not in ("RGB", "RGBA", "L"):
+                    img = img.convert("RGB")
+
+                png_buf = BytesIO()
+                img.save(png_buf, format="PNG")
+                images.append(png_buf.getvalue())
+            except Exception as e:
+                logging.warning(f"Failed to extract image xref={xref} on page {page_num}: {e}")
+
+        if images:
+            page_images[page_num] = images
+
+    doc.close()
+    return page_images
+
 
 def get_text_of_pdf_pages(pdf_pages, start_page, end_page):
     text = ""

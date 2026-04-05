@@ -416,9 +416,13 @@ def extract_pdf_images(doc_path):
     """
     Extract embedded images from a PDF, one list of PNG bytes per page.
 
+    De-duplicates by xref for *storage* (each unique image is converted only
+    once), but every page that references an xref still gets the image in its
+    list so that downstream page-to-node association is correct.
+
     Returns:
         dict[int, list[bytes]]: mapping from 1-indexed page number to list of PNG bytes.
-        Images are de-duplicated by xref across pages; CMYK images are converted to RGB.
+        CMYK images are converted to RGB.
     """
     if isinstance(doc_path, BytesIO):
         doc_path.seek(0)
@@ -426,17 +430,22 @@ def extract_pdf_images(doc_path):
     else:
         doc = pymupdf.open(doc_path)
 
-    seen_xrefs = set()
+    xref_cache = {}  # xref -> PNG bytes (de-dup conversion)
     page_images = {}
 
     for page_idx, page in enumerate(doc):
         page_num = page_idx + 1
         images = []
+        seen_on_page = set()  # avoid duplicates within the same page
         for img_info in page.get_images(full=True):
             xref = img_info[0]
-            if xref in seen_xrefs:
+            if xref in seen_on_page:
                 continue
-            seen_xrefs.add(xref)
+            seen_on_page.add(xref)
+
+            if xref in xref_cache:
+                images.append(xref_cache[xref])
+                continue
 
             try:
                 base_image = doc.extract_image(xref)
@@ -451,7 +460,9 @@ def extract_pdf_images(doc_path):
 
                 png_buf = BytesIO()
                 img.save(png_buf, format="PNG")
-                images.append(png_buf.getvalue())
+                png_bytes = png_buf.getvalue()
+                xref_cache[xref] = png_bytes
+                images.append(png_bytes)
             except Exception as e:
                 logging.warning(f"Failed to extract image xref={xref} on page {page_num}: {e}")
 

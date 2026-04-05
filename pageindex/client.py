@@ -117,17 +117,26 @@ class PageIndexClient:
             if page_images and self.workspace:
                 image_dir = self.workspace / "images" / doc_id
                 image_dir.mkdir(parents=True, exist_ok=True)
-                # Build mapping: page_num -> list of relative image paths
+                # De-dup storage: same bytes (same xref) -> same file, written once
+                content_to_path = {}  # id(bytes) -> rel_path
+                global_img_idx = 0
                 page_image_paths = {}
-                for page_num, img_list in page_images.items():
+                for page_num, img_list in sorted(page_images.items()):
                     paths = []
-                    for img_idx, img_bytes in enumerate(img_list):
-                        rel_path = f"images/{doc_id}/page_{page_num}_img_{img_idx}.png"
-                        abs_path = self.workspace / rel_path
-                        with open(abs_path, 'wb') as img_f:
-                            img_f.write(img_bytes)
-                        paths.append(rel_path)
-                        image_count += 1
+                    for img_bytes in img_list:
+                        obj_id = id(img_bytes)
+                        if obj_id in content_to_path:
+                            # Same xref object, reuse the already-written file
+                            paths.append(content_to_path[obj_id])
+                        else:
+                            rel_path = f"images/{doc_id}/img_{global_img_idx}.png"
+                            abs_path = self.workspace / rel_path
+                            with open(abs_path, 'wb') as img_f:
+                                img_f.write(img_bytes)
+                            content_to_path[obj_id] = rel_path
+                            paths.append(rel_path)
+                            image_count += 1
+                            global_img_idx += 1
                     page_image_paths[page_num] = paths
                 # Associate images with structure tree nodes
                 _attach_images_to_structure(result['structure'], page_image_paths)

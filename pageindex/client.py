@@ -1,4 +1,6 @@
+import hashlib
 import os
+import re
 import uuid
 import json
 import asyncio
@@ -10,7 +12,7 @@ import PyPDF2
 from .page_index import page_index
 from .page_index_md import md_to_tree
 from .retrieve import get_document, get_document_structure, get_page_content
-from .utils import ConfigLoader, remove_fields, extract_pdf_images
+from .utils import ConfigLoader, remove_fields
 
 META_INDEX = "_meta.json"
 
@@ -25,9 +27,19 @@ def _normalize_retrieve_model(model: str) -> str:
     return f"litellm/{model}"
 
 
-import re
-
 _IMG_PLACEHOLDER_RE = re.compile(r'(!\[image\])\((page_\d+_img_\d+)\)')
+
+
+def _resolve_placeholders(text, placeholder_to_path):
+    """Replace image placeholder references with real paths in a string."""
+    if not text or '![image](' not in text:
+        return text
+
+    def _repl(m):
+        key = m.group(2)
+        return f"{m.group(1)}({placeholder_to_path.get(key, key)})"
+
+    return _IMG_PLACEHOLDER_RE.sub(_repl, text)
 
 
 def _replace_image_placeholders(structure, placeholder_to_path):
@@ -37,11 +49,7 @@ def _replace_image_placeholders(structure, placeholder_to_path):
             _replace_image_placeholders(node, placeholder_to_path)
     elif isinstance(structure, dict):
         if 'text' in structure and structure['text']:
-            def _repl(m):
-                key = m.group(2)
-                real_path = placeholder_to_path.get(key, key)
-                return f"{m.group(1)}({real_path})"
-            structure['text'] = _IMG_PLACEHOLDER_RE.sub(_repl, structure['text'])
+            structure['text'] = _resolve_placeholders(structure['text'], placeholder_to_path)
         if 'nodes' in structure:
             _replace_image_placeholders(structure['nodes'], placeholder_to_path)
 
@@ -50,12 +58,7 @@ def _replace_image_placeholders_in_pages(pages, placeholder_to_path):
     """Replace image placeholders in cached page content."""
     for page_entry in pages:
         content = page_entry.get('content', '')
-        if '![image](' in content:
-            def _repl(m):
-                key = m.group(2)
-                real_path = placeholder_to_path.get(key, key)
-                return f"{m.group(1)}({real_path})"
-            page_entry['content'] = _IMG_PLACEHOLDER_RE.sub(_repl, content)
+        page_entry['content'] = _resolve_placeholders(content, placeholder_to_path)
 
 
 def _attach_images_to_structure(structure, page_image_paths):
@@ -145,22 +148,22 @@ class PageIndexClient:
             if page_images and self.workspace:
                 image_dir = self.workspace / "images" / doc_id
                 image_dir.mkdir(parents=True, exist_ok=True)
-                # De-dup storage: same bytes (same xref) -> same file, written once
-                content_to_path = {}  # id(bytes) -> rel_path
+                # De-dup storage: same content hash -> same file, written once
+                hash_to_path = {}  # sha256 -> rel_path
                 global_img_idx = 0
                 page_image_paths = {}
                 for page_num, img_list in sorted(page_images.items()):
                     paths = []
                     for local_idx, img_bytes in enumerate(img_list):
-                        obj_id = id(img_bytes)
-                        if obj_id in content_to_path:
-                            rel_path = content_to_path[obj_id]
+                        content_hash = hashlib.sha256(img_bytes).digest()
+                        if content_hash in hash_to_path:
+                            rel_path = hash_to_path[content_hash]
                         else:
                             rel_path = f"images/{doc_id}/img_{global_img_idx}.png"
                             abs_path = self.workspace / rel_path
                             with open(abs_path, 'wb') as img_f:
                                 img_f.write(img_bytes)
-                            content_to_path[obj_id] = rel_path
+                            hash_to_path[content_hash] = rel_path
                             image_count += 1
                             global_img_idx += 1
                         paths.append(rel_path)
@@ -248,8 +251,7 @@ class PageIndexClient:
         }
         if doc.get('type') == 'pdf':
             entry['page_count'] = doc.get('page_count')
-            if doc.get('image_count'):
-                entry['image_count'] = doc['image_count']
+            entry['image_count'] = doc.get('image_count', 0)
         elif doc.get('type') == 'md':
             entry['line_count'] = doc.get('line_count')
         return entry
@@ -326,7 +328,7 @@ class PageIndexClient:
         doc['structure'] = full.get('structure', [])
         if full.get('pages'):
             doc['pages'] = full['pages']
-        if full.get('image_count') and not doc.get('image_count'):
+        if 'image_count' in full and 'image_count' not in doc:
             doc['image_count'] = full['image_count']
 
     def get_document(self, doc_id: str) -> str:

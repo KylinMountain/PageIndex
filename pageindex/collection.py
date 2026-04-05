@@ -46,6 +46,9 @@ class Collection:
     def get_document_structure(self, doc_id: str) -> list:
         return self._backend.get_document_structure(self._name, doc_id)
 
+    def get_page_content(self, doc_id: str, pages: str) -> list:
+        return self._backend.get_page_content(self._name, doc_id, pages)
+
     def delete_document(self, doc_id: str) -> None:
         self._backend.delete_document(self._name, doc_id)
 

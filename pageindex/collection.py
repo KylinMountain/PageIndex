@@ -43,6 +43,9 @@ class Collection:
     def get_document(self, doc_id: str) -> dict:
         return self._backend.get_document(self._name, doc_id)
 
+    def get_document_structure(self, doc_id: str) -> list:
+        return self._backend.get_document_structure(self._name, doc_id)
+
     def delete_document(self, doc_id: str) -> None:
         self._backend.delete_document(self._name, doc_id)
 

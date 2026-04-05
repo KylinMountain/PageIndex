@@ -20,3 +20,4 @@ class IndexConfig(BaseModel):
     if_add_node_summary: bool = True
     if_add_doc_description: bool = True
     if_add_node_text: bool = False
+    images_dir: str | None = None  # Custom output dir for extracted images; default: internal storage

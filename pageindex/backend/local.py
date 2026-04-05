@@ -95,8 +95,12 @@ class LocalBackend:
         shutil.copy2(file_path, managed_path)
 
         try:
-            # Store images alongside the document: files/{collection}/{doc_id}/images/
-            images_dir = str(col_dir / doc_id / "images")
+            # Use custom images_dir from IndexConfig if provided, otherwise default internal path
+            custom_images_dir = self._index_config.images_dir if self._index_config else None
+            if custom_images_dir:
+                images_dir = str(Path(custom_images_dir) / doc_id)
+            else:
+                images_dir = str(col_dir / doc_id / "images")
             parsed = parser.parse(file_path, model=self._model, images_dir=images_dir)
             result = build_index(parsed, model=self._model, opt=self._index_config)
 

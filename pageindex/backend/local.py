@@ -58,6 +58,13 @@ class LocalBackend:
         return self._storage.list_collections()
 
     def delete_collection(self, name: str) -> None:
+        # Clean up custom images_dir for all docs in collection before deleting
+        custom_images_dir = self._index_config.images_dir if self._index_config else None
+        if custom_images_dir:
+            for doc in self._storage.list_documents(name):
+                custom_doc_dir = Path(custom_images_dir) / doc["doc_id"]
+                if custom_doc_dir.exists():
+                    shutil.rmtree(custom_doc_dir)
         self._storage.delete_collection(name)
         col_dir = self._files_dir / name
         if col_dir.exists():
@@ -128,9 +135,10 @@ class LocalBackend:
             })
         except Exception as e:
             managed_path.unlink(missing_ok=True)
-            doc_dir = col_dir / doc_id
-            if doc_dir.exists():
-                shutil.rmtree(doc_dir)
+            # Clean up images from both default and custom locations
+            for d in [col_dir / doc_id, Path(images_dir)]:
+                if d.exists():
+                    shutil.rmtree(d)
             raise IndexingError(f"Failed to index {file_path}: {e}") from e
 
         return doc_id
@@ -194,10 +202,16 @@ class LocalBackend:
         doc = self._storage.get_document(collection, doc_id)
         if doc and doc.get("file_path"):
             Path(doc["file_path"]).unlink(missing_ok=True)
-        # Clean up images directory: files/{collection}/{doc_id}/
+        # Clean up images from default internal path
         doc_dir = self._files_dir / collection / doc_id
         if doc_dir.exists():
             shutil.rmtree(doc_dir)
+        # Clean up images from custom images_dir if configured
+        custom_images_dir = self._index_config.images_dir if self._index_config else None
+        if custom_images_dir:
+            custom_doc_dir = Path(custom_images_dir) / doc_id
+            if custom_doc_dir.exists():
+                shutil.rmtree(custom_doc_dir)
         self._storage.delete_document(collection, doc_id)
 
     def get_agent_tools(self, collection: str, doc_ids: list[str] | None = None) -> AgentTools:

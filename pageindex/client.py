@@ -63,8 +63,8 @@ class PageIndexClient:
         if isinstance(index_config, IndexConfig):
             opt = index_config.model_copy(update=overrides)
         elif isinstance(index_config, dict):
-            overrides.update(index_config)
-            opt = IndexConfig(**overrides)
+            merged = {**index_config, **overrides}  # explicit model/retrieve_model win
+            opt = IndexConfig(**merged)
         else:
             opt = IndexConfig(**overrides) if overrides else IndexConfig()
 

@@ -158,28 +158,55 @@ class CloudBackend:
         # Fetch structure in the same call via tree endpoint
         tree_resp = self._request("GET", f"/doc/{self._enc(doc_id)}/",
                                   params={"type": "tree", "summary": "true"})
+        raw_tree = tree_resp.get("tree", tree_resp.get("structure", tree_resp.get("result", [])))
         return {
             "doc_id": resp.get("id", doc_id),
             "doc_name": resp.get("name", ""),
             "doc_description": resp.get("description", ""),
             "doc_type": "pdf",
             "status": resp.get("status", ""),
-            "structure": tree_resp.get("tree", tree_resp.get("structure", [])),
+            "structure": self._normalize_tree(raw_tree),
         }
 
     def get_document_structure(self, collection: str, doc_id: str) -> list:
         resp = self._request("GET", f"/doc/{self._enc(doc_id)}/", params={"type": "tree", "summary": "true"})
-        return resp.get("tree", resp.get("structure", []))
+        raw_tree = resp.get("tree", resp.get("structure", resp.get("result", [])))
+        return self._normalize_tree(raw_tree)
 
     def get_page_content(self, collection: str, doc_id: str, pages: str) -> list:
         resp = self._request("GET", f"/doc/{self._enc(doc_id)}/", params={"type": "ocr", "format": "page"})
         # Filter to requested pages
         from ..index.utils import parse_pages
         page_nums = set(parse_pages(pages))
-        all_pages = resp.get("pages", resp.get("ocr", []))
+        all_pages = resp.get("pages", resp.get("ocr", resp.get("result", [])))
         if isinstance(all_pages, list):
-            return [p for p in all_pages if p.get("page") in page_nums]
+            return [
+                {"page": p.get("page", p.get("page_index")),
+                 "content": p.get("content", p.get("markdown", ""))}
+                for p in all_pages
+                if p.get("page", p.get("page_index")) in page_nums
+            ]
         return []
+
+    @staticmethod
+    def _normalize_tree(nodes: list) -> list:
+        """Normalize cloud tree nodes to match local schema."""
+        result = []
+        for node in nodes:
+            normalized = {
+                "title": node.get("title", ""),
+                "node_id": node.get("node_id", ""),
+                "summary": node.get("summary", node.get("prefix_summary", "")),
+                "start_index": node.get("start_index", node.get("page_index")),
+                "end_index": node.get("end_index", node.get("page_index")),
+            }
+            if "text" in node:
+                normalized["text"] = node["text"]
+            children = node.get("nodes", [])
+            if children:
+                normalized["nodes"] = CloudBackend._normalize_tree(children)
+            result.append(normalized)
+        return result
 
     def list_documents(self, collection: str) -> list[dict]:
         folder_id = self._get_folder_id(collection)
